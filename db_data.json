@@ -1,0 +1,111 @@
+{
+  "users": [
+    {
+      "id": "user-admin",
+      "username": "zuki_dev",
+      "email": "zuki8020@gmail.com",
+      "passwordHash": "240be518fabd2724ddb6f04eeb1da5967448d7e831c08c8fa822809f74c720a9",
+      "name": "Zuki Dev",
+      "role": "admin",
+      "hourlyRate": 75,
+      "workType": "full-time",
+      "scheduleStart": "09:00",
+      "scheduleEnd": "17:00",
+      "monthlyHoursCap": 160,
+      "photoUrl": ""
+    },
+    {
+      "id": "user-va",
+      "username": "va_team",
+      "email": "va_team@example.com",
+      "passwordHash": "2b84cf22e0a2db7f66a7b213b2c3491f2eb01f11e9f29bf3368a1fbf105f9df2",
+      "name": "VA Team",
+      "role": "va",
+      "hourlyRate": 200,
+      "workType": "full-time",
+      "scheduleStart": "09:00",
+      "scheduleEnd": "14:00",
+      "monthlyHoursCap": 120,
+      "photoUrl": ""
+    },
+    {
+      "id": "user-maria",
+      "username": "va_maria",
+      "email": "maria@example.com",
+      "passwordHash": "2b84cf22e0a2db7f66a7b213b2c3491f2eb01f11e9f29bf3368a1fbf105f9df2",
+      "name": "Maria Santos",
+      "role": "va",
+      "hourlyRate": 150,
+      "workType": "full-time",
+      "scheduleStart": "09:00",
+      "scheduleEnd": "17:00",
+      "photoUrl": "",
+      "monthlyHoursCap": 160
+    },
+    {
+      "id": "user-juan",
+      "username": "va_juan",
+      "email": "juan@example.com",
+      "passwordHash": "2b84cf22e0a2db7f66a7b213b2c3491f2eb01f11e9f29bf3368a1fbf105f9df2",
+      "name": "Juan Dela Cruz",
+      "role": "va",
+      "hourlyRate": 200,
+      "workType": "part-time",
+      "scheduleStart": "13:00",
+      "scheduleEnd": "15:00",
+      "photoUrl": "",
+      "monthlyHoursCap": 40
+    }
+  ],
+  "logs": [
+    {
+      "id": "log-hjtrxubjz",
+      "userId": "user-va",
+      "username": "va_team",
+      "name": "VA Team",
+      "role": "va",
+      "startTime": "2026-06-25T19:26:02.967Z",
+      "endTime": "2026-06-25T19:28:06.908Z",
+      "description": "cgbdndxghnbx",
+      "isManual": false,
+      "durationMinutes": 2
+    },
+    {
+      "id": "log-1",
+      "userId": "user-va",
+      "username": "va_team",
+      "name": "VA Team",
+      "role": "va",
+      "startTime": "2026-06-23T12:59:57.779Z",
+      "endTime": "2026-06-23T16:59:57.779Z",
+      "description": "Updated client sheets, parsed email queues, and organized calendar events for next week.",
+      "isManual": false,
+      "durationMinutes": 240
+    },
+    {
+      "id": "log-2",
+      "userId": "user-va",
+      "username": "va_team",
+      "name": "VA Team",
+      "role": "va",
+      "startTime": "2026-06-24T12:59:57.779Z",
+      "endTime": "2026-06-24T18:29:57.779Z",
+      "description": "Conducted onboarding calling support and formatted the quarterly metric visual deck.",
+      "isManual": false,
+      "durationMinutes": 330
+    },
+    {
+      "id": "log-3",
+      "userId": "user-admin",
+      "username": "zuki_dev",
+      "name": "Zuki Dev",
+      "role": "admin",
+      "startTime": "2026-06-24T00:59:57.779Z",
+      "endTime": "2026-06-24T03:59:57.779Z",
+      "description": "Fixed CORS issues, configured system environment variables, and optimized Docker container ingress pipelines.",
+      "isManual": false,
+      "durationMinutes": 180
+    }
+  ],
+  "tasks": []
+}
