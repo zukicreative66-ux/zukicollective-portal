@@ -865,6 +865,20 @@ const dbAdapter = {
 
 app.use(express.json());
 
+// Normalize API paths for both local Express and Vercel serverless routing.
+// Vercel rewrites /api/* requests through the serverless entrypoint, so we
+// also accept root-level API-like paths such as /auth/login and /logs.
+app.use((req, res, next) => {
+  const path = req.path || "";
+  const isApiLikeRoute = path.startsWith("/auth/") || path.startsWith("/users") || path.startsWith("/tasks") || path.startsWith("/logs");
+
+  if (isApiLikeRoute && !path.startsWith("/api")) {
+    req.url = `/api${req.url}`;
+  }
+
+  next();
+});
+
 // 1. Security baseline headers middleware
 app.use((req, res, next) => {
   // Prevent browser MIME-sniffing
