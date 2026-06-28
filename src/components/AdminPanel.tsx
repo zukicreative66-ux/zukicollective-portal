@@ -51,7 +51,7 @@ export default function AdminPanel({ user, logs, onRefreshLogs, token }: AdminPa
     try {
       setIsLoadingUsers(true);
       const res = await fetch('/api/users', {
-        headers: { 'Authorization': `Bearer ${token}` }
+        credentials: 'include'
       });
       if (res.ok) {
         const data = await res.json();
@@ -69,7 +69,7 @@ export default function AdminPanel({ user, logs, onRefreshLogs, token }: AdminPa
     try {
       setIsLoadingTasks(true);
       const res = await fetch('/api/tasks', {
-        headers: { 'Authorization': `Bearer ${token}` }
+        credentials: 'include'
       });
       if (res.ok) {
         const data = await res.json();
@@ -181,9 +181,9 @@ export default function AdminPanel({ user, logs, onRefreshLogs, token }: AdminPa
     try {
       const response = await fetch(`/api/logs/${logId}`, {
         method: 'PATCH',
+        credentials: 'include',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`,
         },
         body: JSON.stringify({
           description: editDescription,
@@ -210,7 +210,7 @@ export default function AdminPanel({ user, logs, onRefreshLogs, token }: AdminPa
     try {
       const response = await fetch(`/api/logs/${logId}`, {
         method: 'DELETE',
-        headers: { 'Authorization': `Bearer ${token}` },
+        credentials: 'include',
       });
       if (!response.ok) {
         throw new Error('Failed to delete log');
@@ -244,9 +244,9 @@ export default function AdminPanel({ user, logs, onRefreshLogs, token }: AdminPa
     try {
       const response = await fetch(`/api/users/${userId}`, {
         method: 'PATCH',
+        credentials: 'include',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`,
         },
         body: JSON.stringify({
           name: editUserName.trim(),

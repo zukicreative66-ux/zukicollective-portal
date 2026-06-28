@@ -9,7 +9,7 @@ import { Shield, Clock, Key, AlertCircle, Mail, Lock, HelpCircle, ArrowLeft, Che
 import { logoZuki } from './utils/assets';
 
 export default function App() {
-  const [token, setToken] = useState<string | null>(localStorage.getItem('itp_token'));
+  const [token, setToken] = useState<string | null>(null);
   const [user, setUser] = useState<User | null>(null);
   const [logs, setLogs] = useState<TimeLog[]>([]);
   const [activeTab, setActiveTab] = useState('dashboard');
@@ -36,27 +36,16 @@ export default function App() {
   // 1. Initial auth check on mount
   useEffect(() => {
     const checkAuth = async () => {
-      const storedToken = localStorage.getItem('itp_token');
-      if (!storedToken) {
-        setIsCheckingAuth(false);
-        return;
-      }
-
       try {
-        const response = await fetch('/api/auth/me', {
-          headers: {
-            'Authorization': `Bearer ${storedToken}`,
-          },
-        });
+        const response = await fetch('/api/auth/me', { credentials: 'include' });
 
         if (response.ok) {
-          const userData = await response.json();
+          const payload = await response.json();
+          const userData = payload.user || payload;
           setUser(userData);
-          setToken(storedToken);
+          setToken(payload.token || 'session');
           setActiveTab(userData.role === 'admin' ? 'admin' : 'dashboard');
         } else {
-          // Token expired or invalid
-          localStorage.removeItem('itp_token');
           setToken(null);
         }
       } catch (err) {
@@ -73,11 +62,7 @@ export default function App() {
   const fetchLogs = async () => {
     if (!token) return;
     try {
-      const response = await fetch('/api/logs', {
-        headers: {
-          'Authorization': `Bearer ${token}`,
-        },
-      });
+      const response = await fetch('/api/logs', { credentials: 'include' });
       if (response.ok) {
         const logsData = await response.json();
         setLogs(logsData);
@@ -115,12 +100,20 @@ export default function App() {
       });
 
       if (!response.ok) {
-        const err = await response.json();
-        throw new Error(err.error || 'Invalid credentials');
+        let message = 'Invalid credentials';
+        try {
+          const err = await response.json();
+          message = err.error || message;
+        } catch {
+          const text = await response.text();
+          if (text) {
+            message = text;
+          }
+        }
+        throw new Error(message);
       }
 
       const data = await response.json();
-      localStorage.setItem('itp_token', data.token);
       setToken(data.token);
       setUser(data.user);
       setActiveTab(data.user.role === 'admin' ? 'admin' : 'dashboard');
@@ -132,8 +125,13 @@ export default function App() {
   };
 
   // 4. Logout Action
-  const handleLogout = () => {
-    localStorage.removeItem('itp_token');
+  const handleLogout = async () => {
+    try {
+      await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' });
+    } catch (err) {
+      console.error('Logout request failed:', err);
+    }
+
     setToken(null);
     setUser(null);
     setLogs([]);

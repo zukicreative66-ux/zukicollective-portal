@@ -35,9 +35,9 @@ export default function SettingsView({ user, onUserUpdate, token }: SettingsView
     try {
       const response = await fetch('/api/users/profile', {
         method: 'PATCH',
+        credentials: 'include',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`,
         },
         body: JSON.stringify({
           name: name.trim(),

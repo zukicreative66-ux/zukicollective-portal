@@ -4,11 +4,13 @@ import fs from "fs";
 import crypto from "crypto";
 import nodemailer from "nodemailer";
 import { createClient } from "@supabase/supabase-js";
+import { loadPortalEnvironment } from "./auth-env";
 
 const app = express();
-const PORT = 3000;
+const PORT = process.env.PORT || 3000;
 
 const isVercel = !!process.env.VERCEL;
+const portalEnv = loadPortalEnvironment();
 const ORIGINAL_DB_FILE = path.join(process.cwd(), "db_data.json");
 const DB_FILE = isVercel 
   ? path.join("/tmp", "db_data.json") 
@@ -28,9 +30,57 @@ if (useSupabase) {
 }
 
 const resetTokens = new Map<string, { email: string; otp: string; expiresAt: number; attempts: number }>();
+const sessionStore = new Map<string, { userId: string; expiresAt: number }>();
 
 function hashPassword(password: string): string {
-  return crypto.createHash("sha256").update(password).digest("hex");
+  const salt = crypto.randomBytes(16).toString("hex");
+  const derivedKey = crypto.scryptSync(password, salt, 64).toString("hex");
+  return `scrypt$${salt}$${derivedKey}`;
+}
+
+function verifyPassword(password: string, storedHash?: string): boolean {
+  if (!storedHash) return false;
+
+  if (storedHash.startsWith("scrypt$")) {
+    const [, salt, expectedHash] = storedHash.split("$");
+    if (!salt || !expectedHash) return false;
+
+    const derivedKey = crypto.scryptSync(password, salt, 64).toString("hex");
+    if (derivedKey.length !== expectedHash.length) return false;
+    return crypto.timingSafeEqual(Buffer.from(derivedKey, "hex"), Buffer.from(expectedHash, "hex"));
+  }
+
+  return crypto.createHash("sha256").update(password).digest("hex") === storedHash;
+}
+
+function getSessionCookieOptions() {
+  const isSecure = process.env.NODE_ENV === "production" || isVercel;
+  return {
+    httpOnly: true,
+    secure: isSecure,
+    sameSite: "lax" as const,
+    path: "/",
+    maxAge: 60 * 60 * 24 * 7,
+  };
+}
+
+function setSessionCookie(res: express.Response, token: string) {
+  res.cookie("portal_session", token, getSessionCookieOptions());
+}
+
+function clearSessionCookie(res: express.Response) {
+  res.clearCookie("portal_session", { path: "/" });
+}
+
+function readSessionToken(req: express.Request): string | null {
+  const authHeader = req.headers.authorization;
+  if (authHeader && authHeader.startsWith("Bearer ")) {
+    return authHeader.split(" ")[1];
+  }
+
+  const cookieHeader = req.headers.cookie || "";
+  const match = cookieHeader.match(/(?:^|;\s*)portal_session=([^;]+)/);
+  return match ? decodeURIComponent(match[1]) : null;
 }
 
 async function sendResetEmail(email: string, username: string, otp: string): Promise<boolean> {
@@ -136,15 +186,15 @@ interface DBStructure {
 }
 
 function getSeededUsers(): DBUser[] {
-  const adminUsername = process.env.DEV_USER_NAME || "admin";
-  const adminEmail = process.env.DEV_USER_EMAIL || "admin@example.com";
-  const adminPassword = process.env.DEV_USER_PASSWORD || "admin123";
-  const adminName = process.env.DEV_USER_FULLNAME || "Admin User";
+  const adminUsername = portalEnv.devUserName;
+  const adminEmail = portalEnv.devUserEmail;
+  const adminPassword = portalEnv.devUserPassword;
+  const adminName = portalEnv.devUserFullName;
   
-  const izavaUsername = process.env.IZA_VA_USERNAME || "va_member";
-  const izavaEmail = process.env.IZA_VA_EMAIL || "va_member@example.com";
-  const izavaName = process.env.IZA_VA_NAME || "VA Member";
-  const izavaPassword = process.env.IZA_VA_PASSWORD || "izava123";
+  const izavaUsername = portalEnv.izaVaUsername;
+  const izavaEmail = portalEnv.izaVaEmail;
+  const izavaName = portalEnv.izaVaName;
+  const izavaPassword = portalEnv.izaVaPassword;
 
   return [
     {
@@ -179,8 +229,8 @@ function getSeededUsers(): DBUser[] {
 }
 
 function getDefaultDB(): DBStructure {
-  const adminUsername = process.env.DEV_USER_NAME || "admin";
-  const adminName = process.env.DEV_USER_FULLNAME || "Admin User";
+  const adminUsername = portalEnv.devUserName;
+  const adminName = portalEnv.devUserFullName;
 
   return {
     users: getSeededUsers(),
@@ -865,6 +915,10 @@ const dbAdapter = {
 
 app.use(express.json());
 
+app.get(["/db_data.json", "/metadata.json", "/package.json", "/.env"], (_req, res) => {
+  res.status(404).json({ error: "Not found" });
+});
+
 // Normalize API paths for both local Express and Vercel serverless routing.
 // Vercel rewrites /api/* requests through the serverless entrypoint, so we
 // also accept root-level API-like paths such as /auth/login and /logs.
@@ -934,14 +988,24 @@ app.use("/api", ipRateLimiter(60000, 150, "Too many API requests from this IP. P
 const loginAttempts = new Map<string, { count: number; lockUntil: number }>();
 
 // Token validation middleware
-async function getUserFromToken(authHeader?: string) {
-  if (!authHeader || !authHeader.startsWith("Bearer ")) return null;
-  const token = authHeader.split(" ")[1];
+async function getUserFromToken(authHeader?: string, req?: express.Request) {
+  const token = req ? readSessionToken(req) : (authHeader && authHeader.startsWith("Bearer ") ? authHeader.split(" ")[1] : null);
+  if (!token) return null;
+
+  const existingSession = sessionStore.get(token);
+  if (existingSession) {
+    if (existingSession.expiresAt <= Date.now()) {
+      sessionStore.delete(token);
+      return null;
+    }
+
+    return await dbAdapter.getUserById(existingSession.userId);
+  }
+
   try {
     if (useSupabase && supabase) {
       const { data: { user: authUser }, error } = await supabase.auth.getUser(token);
       if (error || !authUser) {
-        // Fallback to legacy base64 token if Supabase verification fails
         try {
           const username = Buffer.from(token, "base64").toString("utf8");
           return await dbAdapter.getUserByUsername(username);
@@ -986,6 +1050,7 @@ app.post("/api/auth/login", ipRateLimiter(60000, 10, "Too many login attempts fr
 
     let token = "";
     let loginSuccess = false;
+    const passwordMatches = verifyPassword(password, user.passwordHash);
 
     if (useSupabase && supabase) {
       // Attempt native Supabase Auth (GoTrue) login
@@ -1000,8 +1065,7 @@ app.post("/api/auth/login", ipRateLimiter(60000, 10, "Too many login attempts fr
       } else {
         // Automatic on-the-fly migration to GoTrue Auth
         // If the login failed on Supabase but the password matches our local hash, auto-register them in Supabase Auth!
-        const incomingHash = hashPassword(password);
-        if (user.passwordHash === incomingHash) {
+        if (passwordMatches) {
           console.log(`[Supabase Auth] Migrating existing user ${user.username} with email ${user.email} to GoTrue Auth...`);
           if (supabase.auth.admin) {
             const { data: newUser, error: createError } = await supabase.auth.admin.createUser({
@@ -1035,8 +1099,7 @@ app.post("/api/auth/login", ipRateLimiter(60000, 10, "Too many login attempts fr
       }
     } else {
       // Local JSON DB fallback login check
-      const incomingHash = hashPassword(password);
-      if (user.passwordHash === incomingHash) {
+      if (passwordMatches) {
         token = Buffer.from(user.username).toString("base64");
         loginSuccess = true;
       }
@@ -1065,6 +1128,17 @@ app.post("/api/auth/login", ipRateLimiter(60000, 10, "Too many login attempts fr
     // Login success: reset failed login attempts
     loginAttempts.delete(cleanUsername);
 
+    if (passwordMatches && !user.passwordHash.startsWith("scrypt$")) {
+      await dbAdapter.updateUser(user.id, { passwordHash: hashPassword(password) });
+    }
+
+    const sessionToken = crypto.randomBytes(32).toString("hex");
+    sessionStore.set(sessionToken, {
+      userId: user.id,
+      expiresAt: Date.now() + 1000 * 60 * 60 * 24 * 7,
+    });
+    setSessionCookie(res, sessionToken);
+
     res.json({
       user: {
         id: user.id,
@@ -1079,7 +1153,7 @@ app.post("/api/auth/login", ipRateLimiter(60000, 10, "Too many login attempts fr
         monthlyHoursCap: user.monthlyHoursCap,
         photoUrl: user.photoUrl,
       },
-      token,
+      token: sessionToken,
     });
   } catch (error: any) {
     console.error("[Login Handler Exception]:", error);
@@ -1089,24 +1163,38 @@ app.post("/api/auth/login", ipRateLimiter(60000, 10, "Too many login attempts fr
 
 // 2. Me Endpoint
 app.get("/api/auth/me", async (req, res) => {
-  const user = await getUserFromToken(req.headers.authorization);
+  const user = await getUserFromToken(req.headers.authorization, req);
   if (!user) {
     res.status(401).json({ error: "Unauthorized" });
     return;
   }
+
+  const sessionToken = readSessionToken(req);
   res.json({
-    id: user.id,
-    username: user.username,
-    email: user.email,
-    name: user.name,
-    role: user.role,
-    hourlyRate: user.hourlyRate,
-    workType: user.workType,
-    scheduleStart: user.scheduleStart,
-    scheduleEnd: user.scheduleEnd,
-    monthlyHoursCap: user.monthlyHoursCap,
-    photoUrl: user.photoUrl,
+    user: {
+      id: user.id,
+      username: user.username,
+      email: user.email,
+      name: user.name,
+      role: user.role,
+      hourlyRate: user.hourlyRate,
+      workType: user.workType,
+      scheduleStart: user.scheduleStart,
+      scheduleEnd: user.scheduleEnd,
+      monthlyHoursCap: user.monthlyHoursCap,
+      photoUrl: user.photoUrl,
+    },
+    token: sessionToken,
   });
+});
+
+app.post("/api/auth/logout", async (req, res) => {
+  const sessionToken = readSessionToken(req);
+  if (sessionToken) {
+    sessionStore.delete(sessionToken);
+  }
+  clearSessionCookie(res);
+  res.json({ success: true });
 });
 
 // 2.0a Password Reset Request (Forgot Password - Protected with IP rate limiter)
@@ -1268,7 +1356,7 @@ app.post("/api/auth/reset-password", ipRateLimiter(60000, 5, "Too many reset ver
 
 // 2.1 Get users (Admin only)
 app.get("/api/users", async (req, res) => {
-  const user = await getUserFromToken(req.headers.authorization);
+  const user = await getUserFromToken(req.headers.authorization, req);
   if (!user || user.role !== "admin") {
     res.status(403).json({ error: "Admin access required" });
     return;
@@ -1280,7 +1368,7 @@ app.get("/api/users", async (req, res) => {
 
 // 2.2 Update own profile (VAs can edit photo, name)
 app.patch("/api/users/profile", async (req, res) => {
-  const user = await getUserFromToken(req.headers.authorization);
+  const user = await getUserFromToken(req.headers.authorization, req);
   if (!user) {
     res.status(401).json({ error: "Unauthorized" });
     return;
@@ -1316,7 +1404,7 @@ app.patch("/api/users/profile", async (req, res) => {
 
 // 2.3 Update user (Admin edit VA: name, workType, scheduleStart, scheduleEnd, monthlyHoursCap, hourlyRate)
 app.patch("/api/users/:id", async (req, res) => {
-  const adminUser = await getUserFromToken(req.headers.authorization);
+  const adminUser = await getUserFromToken(req.headers.authorization, req);
   if (!adminUser || adminUser.role !== "admin") {
     res.status(403).json({ error: "Admin access required" });
     return;
@@ -1347,7 +1435,7 @@ app.patch("/api/users/:id", async (req, res) => {
 
 // 2.4 Tasks APIs
 app.get("/api/tasks", async (req, res) => {
-  const user = await getUserFromToken(req.headers.authorization);
+  const user = await getUserFromToken(req.headers.authorization, req);
   if (!user) {
     res.status(401).json({ error: "Unauthorized" });
     return;
@@ -1363,7 +1451,7 @@ app.get("/api/tasks", async (req, res) => {
 });
 
 app.post("/api/tasks", async (req, res) => {
-  const user = await getUserFromToken(req.headers.authorization);
+  const user = await getUserFromToken(req.headers.authorization, req);
   if (!user) {
     res.status(401).json({ error: "Unauthorized" });
     return;
@@ -1424,7 +1512,7 @@ app.post("/api/tasks", async (req, res) => {
 });
 
 app.patch("/api/tasks/:id", async (req, res) => {
-  const user = await getUserFromToken(req.headers.authorization);
+  const user = await getUserFromToken(req.headers.authorization, req);
   if (!user) {
     res.status(401).json({ error: "Unauthorized" });
     return;
@@ -1491,7 +1579,7 @@ app.patch("/api/tasks/:id", async (req, res) => {
 });
 
 app.delete("/api/tasks/:id", async (req, res) => {
-  const user = await getUserFromToken(req.headers.authorization);
+  const user = await getUserFromToken(req.headers.authorization, req);
   if (!user) {
     res.status(401).json({ error: "Unauthorized" });
     return;
@@ -1515,7 +1603,7 @@ app.delete("/api/tasks/:id", async (req, res) => {
 
 // 3. Get Logs Endpoint
 app.get("/api/logs", async (req, res) => {
-  const user = await getUserFromToken(req.headers.authorization);
+  const user = await getUserFromToken(req.headers.authorization, req);
   if (!user) {
     res.status(401).json({ error: "Unauthorized" });
     return;
@@ -1532,7 +1620,7 @@ app.get("/api/logs", async (req, res) => {
 
 // 4. Create manual log or clock-in
 app.post("/api/logs", async (req, res) => {
-  const user = await getUserFromToken(req.headers.authorization);
+  const user = await getUserFromToken(req.headers.authorization, req);
   if (!user) {
     res.status(401).json({ error: "Unauthorized" });
     return;
@@ -1573,7 +1661,7 @@ app.post("/api/logs", async (req, res) => {
 
 // 5. Clock-out Endpoint
 app.post("/api/logs/clock-out", async (req, res) => {
-  const user = await getUserFromToken(req.headers.authorization);
+  const user = await getUserFromToken(req.headers.authorization, req);
   if (!user) {
     res.status(401).json({ error: "Unauthorized" });
     return;
@@ -1602,7 +1690,7 @@ app.post("/api/logs/clock-out", async (req, res) => {
 
 // 6. Delete Log
 app.delete("/api/logs/:id", async (req, res) => {
-  const user = await getUserFromToken(req.headers.authorization);
+  const user = await getUserFromToken(req.headers.authorization, req);
   if (!user) {
     res.status(401).json({ error: "Unauthorized" });
     return;
@@ -1628,7 +1716,7 @@ app.delete("/api/logs/:id", async (req, res) => {
 
 // 7. Admin edit log (update description / duration / endTime)
 app.patch("/api/logs/:id", async (req, res) => {
-  const user = await getUserFromToken(req.headers.authorization);
+  const user = await getUserFromToken(req.headers.authorization, req);
   if (!user || user.role !== "admin") {
     res.status(403).json({ error: "Admin access required" });
     return;
@@ -1651,17 +1739,17 @@ app.patch("/api/logs/:id", async (req, res) => {
 });
 
 async function syncEnvCredentials() {
-  const adminUsername = process.env.DEV_USER_NAME || "admin";
-  const adminEmail = process.env.DEV_USER_EMAIL || "admin@example.com";
-  const adminPassword = process.env.DEV_USER_PASSWORD || "admin123";
-  const adminName = process.env.DEV_USER_FULLNAME || "Admin User";
+  const adminUsername = portalEnv.devUserName;
+  const adminEmail = portalEnv.devUserEmail;
+  const adminPassword = portalEnv.devUserPassword;
+  const adminName = portalEnv.devUserFullName;
 
   const incomingHash = hashPassword(adminPassword);
 
-  const izavaUsername = process.env.IZA_VA_USERNAME || "va_member";
-  const izavaEmail = process.env.IZA_VA_EMAIL || "va_member@example.com";
-  const izavaName = process.env.IZA_VA_NAME || "VA Member";
-  const izavaPassword = process.env.IZA_VA_PASSWORD || "izava123";
+  const izavaUsername = portalEnv.izaVaUsername;
+  const izavaEmail = portalEnv.izaVaEmail;
+  const izavaName = portalEnv.izaVaName;
+  const izavaPassword = portalEnv.izaVaPassword;
   const izavaHash = hashPassword(izavaPassword);
 
   // Sync admin and iza_va in local database

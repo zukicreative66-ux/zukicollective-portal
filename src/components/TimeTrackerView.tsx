@@ -78,9 +78,9 @@ export default function TimeTrackerView({ user, logs, onRefreshLogs, token }: Ti
     try {
       const response = await fetch('/api/logs', {
         method: 'POST',
+        credentials: 'include',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`,
         },
         body: JSON.stringify({
           startTime: new Date().toISOString(),
@@ -117,9 +117,9 @@ export default function TimeTrackerView({ user, logs, onRefreshLogs, token }: Ti
     try {
       const response = await fetch('/api/logs/clock-out', {
         method: 'POST',
+        credentials: 'include',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`,
         },
         body: JSON.stringify({ description }),
       });
@@ -165,9 +165,9 @@ export default function TimeTrackerView({ user, logs, onRefreshLogs, token }: Ti
 
       const response = await fetch('/api/logs', {
         method: 'POST',
+        credentials: 'include',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`,
         },
         body: JSON.stringify({
           startTime: start.toISOString(),
@@ -202,9 +202,7 @@ export default function TimeTrackerView({ user, logs, onRefreshLogs, token }: Ti
     try {
       const response = await fetch(`/api/logs/${logId}`, {
         method: 'DELETE',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-        },
+        credentials: 'include',
       });
       if (!response.ok) {
         const err = await response.json();

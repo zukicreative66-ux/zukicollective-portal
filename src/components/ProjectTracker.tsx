@@ -26,7 +26,7 @@ export default function ProjectTracker({ user, token }: ProjectTrackerProps) {
     try {
       setIsLoading(true);
       const res = await fetch('/api/tasks', {
-        headers: { 'Authorization': `Bearer ${token}` }
+        credentials: 'include'
       });
       if (res.ok) {
         const data = await res.json();
@@ -53,9 +53,9 @@ export default function ProjectTracker({ user, token }: ProjectTrackerProps) {
     try {
       const res = await fetch('/api/tasks', {
         method: 'POST',
+        credentials: 'include',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
         },
         body: JSON.stringify({
           title: title.trim(),
@@ -85,9 +85,9 @@ export default function ProjectTracker({ user, token }: ProjectTrackerProps) {
     try {
       const res = await fetch(`/api/tasks/${taskId}`, {
         method: 'PATCH',
+        credentials: 'include',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
         },
         body: JSON.stringify({ status: nextStatus })
       });
@@ -105,7 +105,7 @@ export default function ProjectTracker({ user, token }: ProjectTrackerProps) {
     try {
       const res = await fetch(`/api/tasks/${taskId}`, {
         method: 'DELETE',
-        headers: { 'Authorization': `Bearer ${token}` }
+        credentials: 'include'
       });
 
       if (res.ok) {
