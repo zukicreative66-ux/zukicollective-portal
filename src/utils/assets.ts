@@ -12,8 +12,8 @@
  */
 
 // Elegant abstract design agency placeholders from Unsplash (fitting the Peach, Cream & Brown warm brand palette)
-import logoImg from '../assets/images/logo_zuki_1782392716974.jpg';
-import coverImg from '../assets/images/cover_zuki_1782392733832.jpg';
+import logoImg from '../assets/images/logo_zuki_1782392716974.png';
+import coverImg from '../assets/images/cover_zuki_1782392733832.png';
 
 // Elegant abstract design agency placeholders from Unsplash (fitting the Peach, Cream & Brown warm brand palette)
     const BRAND_LOGO_FALLBACK = "https://images.unsplash.com/photo-1561070791-2526d30994b5?q=80&w=300&auto=format&fit=crop"; // Warm abstract color block representing creatives
