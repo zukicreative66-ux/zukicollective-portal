@@ -108,6 +108,21 @@ export default function TimeTrackerView({ user, logs, onRefreshLogs, token }: Ti
         throw new Error(message);
       }
 
+      const optimisticLog: TimeLog = {
+        id: `temp-${Date.now()}`,
+        userId: user.id,
+        username: user.username,
+        name: user.name,
+        role: user.role,
+        startTime: new Date().toISOString(),
+        endTime: null,
+        description: '',
+        isManual: false,
+        durationMinutes: 0,
+      };
+
+      setActiveLog(optimisticLog);
+      setElapsedSeconds(0);
       setSuccessMessage('Successfully clocked in. Shift timer started!');
       onRefreshLogs();
     } catch (err: any) {
@@ -118,12 +133,8 @@ export default function TimeTrackerView({ user, logs, onRefreshLogs, token }: Ti
   };
 
   // 2. Clock Out Action
-  const handleClockOut = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!description.trim()) {
-      setErrorMessage('Please describe the work/tasks completed during this shift before clocking out.');
-      return;
-    }
+  const handleClockOut = async (e?: React.FormEvent | null) => {
+    e?.preventDefault();
 
     setIsSubmitting(true);
     setErrorMessage('');
@@ -135,7 +146,7 @@ export default function TimeTrackerView({ user, logs, onRefreshLogs, token }: Ti
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ description }),
+        body: JSON.stringify({ description: description.trim() || 'Completed shift work.' }),
       });
 
       if (!response.ok) {
@@ -146,8 +157,10 @@ export default function TimeTrackerView({ user, logs, onRefreshLogs, token }: Ti
         throw new Error(message);
       }
 
-      setSuccessMessage('Shift logged successfully! Great work.');
+      setActiveLog(null);
+      setElapsedSeconds(0);
       setDescription('');
+      setSuccessMessage('Shift logged successfully! Great work.');
       onRefreshLogs();
     } catch (err: any) {
       setErrorMessage(err.message || 'Error occurred during clock-out');
@@ -348,7 +361,7 @@ export default function TimeTrackerView({ user, logs, onRefreshLogs, token }: Ti
                 </div>
               </div>
 
-              <div>
+              <div className="space-y-3">
                 {!activeLog ? (
                   <button
                     id="btn-clock-in"
@@ -360,11 +373,22 @@ export default function TimeTrackerView({ user, logs, onRefreshLogs, token }: Ti
                     Start Clock-In Timer
                   </button>
                 ) : (
-                  <div className="text-center p-3 bg-brand-brown border border-brand-peach/10 rounded-xl">
-                    <span className="text-xs font-mono text-brand-peach/70">
-                      Started at: {new Date(activeLog.startTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                    </span>
-                  </div>
+                  <>
+                    <div className="text-center p-3 bg-brand-brown border border-brand-peach/10 rounded-xl">
+                      <span className="text-xs font-mono text-brand-peach/70">
+                        Started at: {new Date(activeLog.startTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      </span>
+                    </div>
+                    <button
+                      id="btn-clock-out-inline"
+                      onClick={() => handleClockOut()}
+                      disabled={isSubmitting}
+                      className="w-full py-3 bg-rose-600 hover:bg-rose-500 disabled:opacity-50 text-white font-bold rounded-xl shadow-lg shadow-rose-600/10 text-sm transition-all flex items-center justify-center cursor-pointer"
+                    >
+                      <Square size={14} className="mr-2 fill-current" />
+                      Clock Out Now
+                    </button>
+                  </>
                 )}
               </div>
             </div>
@@ -486,12 +510,6 @@ export default function TimeTrackerView({ user, logs, onRefreshLogs, token }: Ti
                 </form>
               )}
 
-              <div className="p-4 bg-brand-brown/30 border border-brand-peach/10 rounded-xl flex items-start space-x-3">
-                <FileText size={16} className="text-brand-peach/60 mt-0.5 shrink-0" />
-                <p className="text-[11px] leading-relaxed text-brand-cream/60">
-                  Logged hours feed directly into payroll calculations. For retroactive corrections to finished logs, contact the system administrator (<span className="font-mono text-brand-peach">zuki_dev</span>).
-                </p>
-              </div>
             </div>
           </div>
 

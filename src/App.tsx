@@ -259,16 +259,16 @@ export default function App() {
         <div className="w-full max-w-md z-10 space-y-6">
           {/* Logo Heading */}
           <div className="text-center flex flex-col items-center">
-            <div className="flex items-center justify-center mb-4">
+            <div className="flex items-center justify-center mb-2">
               <img 
                 src={logoZuki} 
                 alt="Zuki Logo" 
                 referrerPolicy="no-referrer"
-                className="h-[165px] w-[177px] object-contain"
+                className="h-[145px] w-[155px] object-contain"
               />
             </div>
-            <h1 className="h-[65px] w-[262.594px] text-[41px] font-serif font-bold tracking-tight text-brand-peach flex items-center justify-center mx-auto">Zuki Creatives</h1>
-            <p className="h-[28px] w-[192px] text-[13px] text-brand-peach/60 mt-1.5 font-mono uppercase tracking-widest flex items-center justify-center mx-auto">Internal Team Portal</p>
+            <h1 className="text-[41px] font-serif font-bold tracking-tight text-brand-peach flex items-center justify-center mx-auto leading-none">Zuki Creatives</h1>
+            <p className="text-[13px] text-brand-peach/60 mt-1 font-mono uppercase tracking-widest flex items-center justify-center mx-auto">Internal Team Portal</p>
           </div>
 
           {/* Form Card Container */}
@@ -309,7 +309,7 @@ export default function App() {
                         type="text"
                         required
                         disabled={isLoggingIn}
-                        placeholder="zuki_dev"
+                        placeholder="Enter your username"
                         value={username}
                         onChange={(e) => setUsername(e.target.value)}
                         className="w-full pl-9 pr-4 py-2.5 bg-brand-brown/40 border border-brand-peach/10 focus:border-brand-peach/50 text-brand-cream text-sm rounded-xl focus:outline-none focus:ring-2 focus:ring-brand-peach/5 placeholder:text-brand-peach/30 transition-all font-mono"

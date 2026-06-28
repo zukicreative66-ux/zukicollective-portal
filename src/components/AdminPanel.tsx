@@ -408,6 +408,14 @@ export default function AdminPanel({ user, logs, onRefreshLogs, token }: AdminPa
               </div>
 
               <div className="flex flex-wrap gap-3">
+                <button
+                  type="button"
+                  onClick={handleExportCSV}
+                  className="inline-flex items-center gap-2 px-3 py-2 rounded-xl border border-brand-peach/20 bg-brand-peach/10 text-brand-peach text-xs font-semibold hover:bg-brand-peach/20 transition-all cursor-pointer"
+                >
+                  <FileDown size={14} /> Export VA Logs CSV
+                </button>
+
                 <div>
                   <label className="block text-[10px] font-mono font-bold text-brand-peach/60 uppercase tracking-widest mb-1.5">Filter Member</label>
                   <select
