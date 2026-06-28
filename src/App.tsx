@@ -389,7 +389,7 @@ export default function App() {
                         type="text"
                         required
                         disabled={isResetLoading}
-                        placeholder="e.g. va_maria"
+                        placeholder="e.g. va_member"
                         value={resetUsernameOrEmail}
                         onChange={(e) => setResetUsernameOrEmail(e.target.value)}
                         className="w-full pl-9 pr-4 py-2.5 bg-brand-brown/40 border border-brand-peach/10 focus:border-brand-peach/50 text-brand-cream text-sm rounded-xl focus:outline-none focus:ring-2 focus:ring-brand-peach/5 placeholder:text-brand-peach/30 transition-all font-mono"

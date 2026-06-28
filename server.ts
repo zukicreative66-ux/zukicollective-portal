@@ -136,14 +136,23 @@ interface DBStructure {
   tasks: DBTask[];
 }
 
-const defaultDB: DBStructure = {
-  users: [
+function getSeededUsers(): DBUser[] {
+  const adminUsername = process.env.DEV_USER_NAME || "admin";
+  const adminEmail = process.env.DEV_USER_EMAIL || "admin@example.com";
+  const adminPassword = process.env.DEV_USER_PASSWORD || "admin123";
+  const adminName = process.env.DEV_USER_FULLNAME || "Admin User";
+  
+  const vaTeamPassword = process.env.VA_TEAM_PASSWORD || "vateam123";
+  const vaMemberAPassword = process.env.VA_MARIA_PASSWORD || "vamembera123";
+  const vaMemberBPassword = process.env.VA_JUAN_PASSWORD || "vamemberb123";
+
+  return [
     {
       id: "user-admin",
-      username: "zuki_dev",
-      email: "zuki8020@gmail.com",
-      passwordHash: "240be518fabd2724ddb6f04eeb1da5967448d7e831c08c8fa822809f74c720a9",
-      name: "Zuki Dev",
+      username: adminUsername,
+      email: adminEmail,
+      passwordHash: hashPassword(adminPassword),
+      name: adminName,
       role: "admin",
       hourlyRate: 250,
       workType: "full-time",
@@ -156,7 +165,7 @@ const defaultDB: DBStructure = {
       id: "user-va",
       username: "va_team",
       email: "va_team@example.com",
-      passwordHash: "2b84cf22e0a2db7f66a7b213b2c3491f2eb01f11e9f29bf3368a1fbf105f9df2",
+      passwordHash: hashPassword(vaTeamPassword),
       name: "VA Team",
       role: "va",
       hourlyRate: 200,
@@ -168,10 +177,10 @@ const defaultDB: DBStructure = {
     },
     {
       id: "user-maria",
-      username: "va_maria",
-      email: "maria@example.com",
-      passwordHash: "2b84cf22e0a2db7f66a7b213b2c3491f2eb01f11e9f29bf3368a1fbf105f9df2",
-      name: "Maria Santos",
+      username: "va_member_a",
+      email: "va_member_a@example.com",
+      passwordHash: hashPassword(vaMemberAPassword),
+      name: "VA Member A",
       role: "va",
       hourlyRate: 150,
       workType: "full-time",
@@ -182,10 +191,10 @@ const defaultDB: DBStructure = {
     },
     {
       id: "user-juan",
-      username: "va_juan",
-      email: "juan@example.com",
-      passwordHash: "2b84cf22e0a2db7f66a7b213b2c3491f2eb01f11e9f29bf3368a1fbf105f9df2",
-      name: "Juan Dela Cruz",
+      username: "va_member_b",
+      email: "va_member_b@example.com",
+      passwordHash: hashPassword(vaMemberBPassword),
+      name: "VA Member B",
       role: "va",
       hourlyRate: 200,
       workType: "part-time",
@@ -193,86 +202,96 @@ const defaultDB: DBStructure = {
       scheduleEnd: "15:00",
       photoUrl: "",
       monthlyHoursCap: 40,
-    },
-  ],
-  logs: [
-    {
-      id: "log-1",
-      userId: "user-maria",
-      username: "va_maria",
-      name: "Maria Santos",
-      role: "va",
-      startTime: new Date(Date.now() - 24 * 60 * 60 * 1000 * 2).toISOString(),
-      endTime: new Date(Date.now() - 24 * 60 * 60 * 1000 * 2 + 4 * 60 * 60 * 1000).toISOString(),
-      description: "Updated client sheets, parsed email queues, and organized calendar events for next week.",
-      isManual: false,
-      durationMinutes: 240,
-    },
-    {
-      id: "log-2",
-      userId: "user-maria",
-      username: "va_maria",
-      name: "Maria Santos",
-      role: "va",
-      startTime: new Date(Date.now() - 24 * 60 * 60 * 1000 * 1).toISOString(),
-      endTime: new Date(Date.now() - 24 * 60 * 60 * 1000 * 1 + 5.5 * 60 * 60 * 1000).toISOString(),
-      description: "Conducted onboarding calling support and formatted the quarterly metric visual deck.",
-      isManual: false,
-      durationMinutes: 330,
-    },
-    {
-      id: "log-3",
-      userId: "user-admin",
-      username: "zuki_dev",
-      name: "Zuki Dev",
-      role: "admin",
-      startTime: new Date(Date.now() - 24 * 60 * 60 * 1000 * 1.5).toISOString(),
-      endTime: new Date(Date.now() - 24 * 60 * 60 * 1000 * 1.5 + 3 * 60 * 60 * 1000).toISOString(),
-      description: "Fixed CORS issues, configured system environment variables, and optimized Docker container ingress pipelines.",
-      isManual: false,
-      durationMinutes: 180,
-    },
-  ],
-  tasks: [
-    {
-      id: "task-1",
-      userId: "user-maria",
-      userName: "Maria Santos",
-      title: "Clean Client Sheets database",
-      project: "Database Setup",
-      status: "In Progress",
-      priority: "High",
-      description: "Go through Google Sheets row duplication and run cleanups on customer phone lists.",
-      createdAt: new Date().toISOString()
-    },
-    {
-      id: "task-2",
-      userId: "user-maria",
-      userName: "Maria Santos",
-      title: "Draft email outreach sequence",
-      project: "Marketing Outreach",
-      status: "Todo",
-      priority: "Medium",
-      description: "Write the 3-step follow up campaign for new registered webinar attendees.",
-      createdAt: new Date().toISOString()
-    },
-    {
-      id: "task-3",
-      userId: "user-juan",
-      userName: "Juan Dela Cruz",
-      title: "Format metric report deck",
-      project: "Monthly Reporting",
-      status: "Completed",
-      priority: "High",
-      description: "Apply company custom palette, fix line graphs, and export slide deck in PDF format.",
-      createdAt: new Date().toISOString()
     }
-  ]
-};
+  ];
+}
+
+function getDefaultDB(): DBStructure {
+  const adminUsername = process.env.DEV_USER_NAME || "admin";
+  const adminName = process.env.DEV_USER_FULLNAME || "Admin User";
+
+  return {
+    users: getSeededUsers(),
+    logs: [
+      {
+        id: "log-1",
+        userId: "user-maria",
+        username: "va_member_a",
+        name: "VA Member A",
+        role: "va",
+        startTime: new Date(Date.now() - 24 * 60 * 60 * 1000 * 2).toISOString(),
+        endTime: new Date(Date.now() - 24 * 60 * 60 * 1000 * 2 + 4 * 60 * 60 * 1000).toISOString(),
+        description: "Updated client sheets, parsed email queues, and organized calendar events for next week.",
+        isManual: false,
+        durationMinutes: 240,
+      },
+      {
+        id: "log-2",
+        userId: "user-maria",
+        username: "va_member_a",
+        name: "VA Member A",
+        role: "va",
+        startTime: new Date(Date.now() - 24 * 60 * 60 * 1000 * 1).toISOString(),
+        endTime: new Date(Date.now() - 24 * 60 * 60 * 1000 * 1 + 5.5 * 60 * 60 * 1000).toISOString(),
+        description: "Conducted onboarding calling support and formatted the quarterly metric visual deck.",
+        isManual: false,
+        durationMinutes: 330,
+      },
+      {
+        id: "log-3",
+        userId: "user-admin",
+        username: adminUsername,
+        name: adminName,
+        role: "admin",
+        startTime: new Date(Date.now() - 24 * 60 * 60 * 1000 * 1.5).toISOString(),
+        endTime: new Date(Date.now() - 24 * 60 * 60 * 1000 * 1.5 + 3 * 60 * 60 * 1000).toISOString(),
+        description: "Fixed CORS issues, configured system environment variables, and optimized Docker container ingress pipelines.",
+        isManual: false,
+        durationMinutes: 180,
+      },
+    ],
+    tasks: [
+      {
+        id: "task-1",
+        userId: "user-maria",
+        userName: "VA Member A",
+        title: "Clean Client Sheets database",
+        project: "Database Setup",
+        status: "In Progress",
+        priority: "High",
+        description: "Go through Google Sheets row duplication and run cleanups on customer phone lists.",
+        createdAt: new Date().toISOString()
+      },
+      {
+        id: "task-2",
+        userId: "user-maria",
+        userName: "VA Member A",
+        title: "Draft email outreach sequence",
+        project: "Marketing Outreach",
+        status: "Todo",
+        priority: "Medium",
+        description: "Write the 3-step follow up campaign for new registered webinar attendees.",
+        createdAt: new Date().toISOString()
+      },
+      {
+        id: "task-3",
+        userId: "user-juan",
+        userName: "VA Member B",
+        title: "Format metric report deck",
+        project: "Monthly Reporting",
+        status: "Completed",
+        priority: "High",
+        description: "Apply company custom palette, fix line graphs, and export slide deck in PDF format.",
+        createdAt: new Date().toISOString()
+      }
+    ]
+  };
+}
 
 // Fallback Local File Handlers
 function readDB(): DBStructure {
   try {
+    const defaultDB = getDefaultDB();
     if (isVercel && !fs.existsSync(DB_FILE)) {
       try {
         if (fs.existsSync(ORIGINAL_DB_FILE)) {
@@ -310,17 +329,17 @@ function readDB(): DBStructure {
       }
       let email = u.email;
       if (!email) {
-        email = u.username === "zuki_dev" ? "zuki8020@gmail.com" : `${u.username}@example.com`;
+        email = u.username === (process.env.DEV_USER_NAME || "admin") ? (process.env.DEV_USER_EMAIL || "admin@example.com") : `${u.username}@example.com`;
         migrated = true;
       }
       return {
         ...u,
         email,
         passwordHash: pwd,
-        workType: u.workType || (u.role === 'admin' ? 'full-time' : (u.username === 'va_juan' ? 'part-time' : 'full-time')),
+        workType: u.workType || (u.role === 'admin' ? 'full-time' : (u.username === 'va_member_b' ? 'part-time' : 'full-time')),
         scheduleStart: u.scheduleStart || "09:00",
-        scheduleEnd: u.scheduleEnd || (u.username === 'va_juan' ? "15:00" : (u.username === 'va_team' ? "14:00" : "17:00")),
-        monthlyHoursCap: u.monthlyHoursCap || (u.username === 'va_juan' ? 40 : (u.username === 'va_team' ? 120 : 160)),
+        scheduleEnd: u.scheduleEnd || (u.username === 'va_member_b' ? "15:00" : (u.username === 'va_team' ? "14:00" : "17:00")),
+        monthlyHoursCap: u.monthlyHoursCap || (u.username === 'va_member_b' ? 40 : (u.username === 'va_team' ? 120 : 160)),
         photoUrl: u.photoUrl || "",
       };
     });
@@ -345,7 +364,7 @@ function readDB(): DBStructure {
     return db;
   } catch (err) {
     console.error("Error reading database file, resetting to default:", err);
-    return defaultDB;
+    return getDefaultDB();
   }
 }
 
@@ -545,7 +564,7 @@ async function mapTaskToDb(task: Partial<DBTask>): Promise<any> {
 
 function sanitizePostgrestString(val: string): string {
   // PostgREST filter injection mitigation: sanitize control characters that can manipulate search filters
-  return val.replace(/[(),.:'"]/g, "").trim();
+  return val.replace(/[(),'"]/g, "").trim();
 }
 
 // Unified Database Adapter Layer
@@ -1036,134 +1055,155 @@ app.get("/api/auth/me", async (req, res) => {
 
 // 2.0a Password Reset Request (Forgot Password - Protected with IP rate limiter)
 app.post("/api/auth/forgot-password", ipRateLimiter(60000, 5, "Too many password reset requests. Please try again in 1 minute."), async (req, res) => {
-  const { usernameOrEmail } = req.body;
-  if (!usernameOrEmail) {
-    res.status(400).json({ error: "Username or email is required" });
-    return;
-  }
+  try {
+    const { usernameOrEmail } = req.body;
+    if (!usernameOrEmail) {
+      res.status(400).json({ error: "Username or email is required" });
+      return;
+    }
 
-  const user = await dbAdapter.getUserByEmailOrUsername(usernameOrEmail);
+    const user = await dbAdapter.getUserByEmailOrUsername(usernameOrEmail);
 
-  if (!user) {
+    if (!user) {
+      res.json({
+        success: true,
+        message: "If the account exists, a 6-digit verification code has been sent to your registered Gmail.",
+        username: usernameOrEmail,
+      });
+      return;
+    }
+
+    const emailStr = user.email ? user.email.trim() : "";
+    if (!emailStr) {
+      res.status(400).json({ error: `The user account "${user.username}" does not have a registered email address configured.` });
+      return;
+    }
+
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    
+    resetTokens.set(user.username.toLowerCase(), {
+      email: emailStr,
+      otp,
+      expiresAt: Date.now() + 15 * 60 * 1000,
+      attempts: 0,
+    });
+
+    const parts = emailStr.split("@");
+    let maskedEmail = emailStr;
+    if (parts.length === 2) {
+      const namePart = parts[0];
+      const domainPart = parts[1];
+      if (namePart.length > 2) {
+        maskedEmail = namePart.charAt(0) + "*".repeat(namePart.length - 2) + namePart.charAt(namePart.length - 1) + "@" + domainPart;
+      } else {
+        maskedEmail = namePart.charAt(0) + "*@" + domainPart;
+      }
+    }
+
+    const sent = await sendResetEmail(emailStr, user.username, otp);
+
     res.json({
       success: true,
-      message: "If the account exists, a 6-digit verification code has been sent to your registered Gmail.",
-      username: usernameOrEmail,
+      message: `A 6-digit verification code has been sent to your registered email: ${maskedEmail}.`,
+      username: user.username,
+      email: maskedEmail,
+      realSent: sent,
     });
-    return;
+  } catch (error: any) {
+    console.error("[ForgotPassword Error]:", error);
+    res.status(500).json({ error: error.message || "An internal error occurred during forgot password request." });
   }
-
-  const otp = Math.floor(100000 + Math.random() * 900000).toString();
-  
-  resetTokens.set(user.username.toLowerCase(), {
-    email: user.email,
-    otp,
-    expiresAt: Date.now() + 15 * 60 * 1000,
-    attempts: 0,
-  });
-
-  const parts = user.email.split("@");
-  let maskedEmail = user.email;
-  if (parts.length === 2) {
-    const namePart = parts[0];
-    const domainPart = parts[1];
-    if (namePart.length > 2) {
-      maskedEmail = namePart.charAt(0) + "*".repeat(namePart.length - 2) + namePart.charAt(namePart.length - 1) + "@" + domainPart;
-    } else {
-      maskedEmail = namePart.charAt(0) + "*@" + domainPart;
-    }
-  }
-
-  const sent = await sendResetEmail(user.email, user.username, otp);
-
-  res.json({
-    success: true,
-    message: `A 6-digit verification code has been sent to your registered email: ${maskedEmail}.`,
-    username: user.username,
-    email: maskedEmail,
-    realSent: sent,
-  });
 });
 
 // 2.0b Password Reset Verification & Update (Protected with IP rate limiter)
 app.post("/api/auth/reset-password", ipRateLimiter(60000, 5, "Too many reset verification attempts. Please try again in 1 minute."), async (req, res) => {
-  const { username, otp, newPassword } = req.body;
-  if (!username || !otp || !newPassword) {
-    res.status(400).json({ error: "Username, verification code, and new password are required" });
-    return;
-  }
+  try {
+    const { username, otp, newPassword } = req.body;
+    if (!username || !otp || !newPassword) {
+      res.status(400).json({ error: "Username, verification code, and new password are required" });
+      return;
+    }
 
-  const cleanUsername = username.toLowerCase().trim();
-  const tokenData = resetTokens.get(cleanUsername);
-  if (!tokenData) {
-    res.status(400).json({ error: "No active password reset request found for this user." });
-    return;
-  }
+    const cleanUsername = username.toLowerCase().trim();
+    const tokenData = resetTokens.get(cleanUsername);
+    if (!tokenData) {
+      res.status(400).json({ error: "No active password reset request found for this user." });
+      return;
+    }
 
-  if (Date.now() > tokenData.expiresAt) {
-    resetTokens.delete(cleanUsername);
-    res.status(400).json({ error: "Verification code has expired. Please request a new one." });
-    return;
-  }
+    if (Date.now() > tokenData.expiresAt) {
+      resetTokens.delete(cleanUsername);
+      res.status(400).json({ error: "Verification code has expired. Please request a new one." });
+      return;
+    }
 
-  // Enforce server-side password validation
-  if (newPassword.length < 6) {
-    res.status(400).json({ error: "Password must be at least 6 characters long." });
-    return;
-  }
+    // Enforce server-side password validation
+    if (newPassword.length < 6) {
+      res.status(400).json({ error: "Password must be at least 6 characters long." });
+      return;
+    }
 
-  if (tokenData.attempts >= 3) {
-    resetTokens.delete(cleanUsername);
-    res.status(400).json({ error: "Too many failed attempts with this verification code. Please request a new code." });
-    return;
-  }
-
-  if (tokenData.otp !== otp.trim()) {
-    tokenData.attempts += 1;
     if (tokenData.attempts >= 3) {
       resetTokens.delete(cleanUsername);
-      res.status(400).json({ error: "Invalid verification code. This code has been invalidated due to too many failed attempts." });
-    } else {
-      const remaining = 3 - tokenData.attempts;
-      res.status(400).json({ error: `Invalid verification code. You have ${remaining} attempt(s) remaining.` });
+      res.status(400).json({ error: "Too many failed attempts with this verification code. Please request a new code." });
+      return;
     }
-    return;
-  }
 
-  const user = await dbAdapter.getUserByUsername(username);
-  if (!user) {
-    res.status(404).json({ error: "User not found during reset." });
-    return;
-  }
+    if (tokenData.otp !== otp.trim()) {
+      tokenData.attempts += 1;
+      if (tokenData.attempts >= 3) {
+        resetTokens.delete(cleanUsername);
+        res.status(400).json({ error: "Invalid verification code. This code has been invalidated due to too many failed attempts." });
+      } else {
+        const remaining = 3 - tokenData.attempts;
+        res.status(400).json({ error: `Invalid verification code. You have ${remaining} attempt(s) remaining.` });
+      }
+      return;
+    }
 
-  await dbAdapter.updateUser(user.id, { passwordHash: hashPassword(newPassword) });
+    const user = await dbAdapter.getUserByUsername(username);
+    if (!user) {
+      res.status(404).json({ error: "User not found during reset." });
+      return;
+    }
 
-  // If Supabase is active, update their password in GoTrue Auth
-  if (useSupabase && supabase) {
-    const { error: updateAuthError } = await supabase.auth.admin.updateUserById(user.id, {
-      password: newPassword,
-    });
-    if (updateAuthError) {
-      console.log("[Supabase Auth] updateUserById failed during reset, attempting admin.createUser fallback. Error:", updateAuthError);
-      // Auto-register/provision in GoTrue Auth if they didn't exist there yet
-      const { error: createAuthError } = await supabase.auth.admin.createUser({
-        email: user.email,
-        password: newPassword,
-        email_confirm: true,
-      });
-      if (createAuthError) {
-        console.error("[Supabase Auth] Failed to provision/reset password in Supabase Auth GoTrue:", createAuthError);
+    await dbAdapter.updateUser(user.id, { passwordHash: hashPassword(newPassword) });
+
+    // If Supabase is active, update their password in GoTrue Auth
+    if (useSupabase && supabase) {
+      const emailStr = user.email ? user.email.trim() : "";
+      if (emailStr) {
+        const { error: updateAuthError } = await supabase.auth.admin.updateUserById(user.id, {
+          password: newPassword,
+        });
+        if (updateAuthError) {
+          console.log("[Supabase Auth] updateUserById failed during reset, attempting admin.createUser fallback. Error:", updateAuthError);
+          // Auto-register/provision in GoTrue Auth if they didn't exist there yet
+          const { error: createAuthError } = await supabase.auth.admin.createUser({
+            email: emailStr,
+            password: newPassword,
+            email_confirm: true,
+          });
+          if (createAuthError) {
+            console.error("[Supabase Auth] Failed to provision/reset password in Supabase Auth GoTrue:", createAuthError);
+          }
+        }
+      } else {
+        console.warn(`[Supabase Auth Warning] User ${user.username} has no email configured, skipping GoTrue credentials sync.`);
       }
     }
+
+    // Invalidate token immediately after use (single-use constraint)
+    resetTokens.delete(cleanUsername);
+
+    res.json({
+      success: true,
+      message: "Password updated successfully! You can now log in with your new password.",
+    });
+  } catch (error: any) {
+    console.error("[ResetPassword Error]:", error);
+    res.status(500).json({ error: error.message || "An internal error occurred during password reset." });
   }
-
-  // Invalidate token immediately after use (single-use constraint)
-  resetTokens.delete(cleanUsername);
-
-  res.json({
-    success: true,
-    message: "Password updated successfully! You can now log in with your new password.",
-  });
 });
 
 // 2.1 Get users (Admin only)
@@ -1550,8 +1590,209 @@ app.patch("/api/logs/:id", async (req, res) => {
   }
 });
 
+async function syncEnvCredentials() {
+  const adminUsername = process.env.DEV_USER_NAME || "admin";
+  const adminEmail = process.env.DEV_USER_EMAIL || "admin@example.com";
+  const adminPassword = process.env.DEV_USER_PASSWORD;
+  const adminName = process.env.DEV_USER_FULLNAME || "Admin User";
+
+  if (!adminPassword) {
+    console.log("[Credentials Sync] DEV_USER_PASSWORD not configured. Skipping credentials sync.");
+    return;
+  }
+
+  const incomingHash = hashPassword(adminPassword);
+
+  // Sync in local database if present
+  try {
+    const db = readDB();
+    const localAdmin = db.users.find(u => u.username.toLowerCase().trim() === adminUsername.toLowerCase().trim());
+    if (localAdmin) {
+      if (localAdmin.passwordHash !== incomingHash || localAdmin.email !== adminEmail) {
+        console.log(`[Credentials Sync] Updating admin password hash/email in local DB to match environment variables...`);
+        localAdmin.passwordHash = incomingHash;
+        localAdmin.email = adminEmail;
+        localAdmin.name = adminName;
+        writeDB(db);
+      }
+    } else {
+      console.log(`[Credentials Sync] Admin user "${adminUsername}" not found in local DB. Creating...`);
+      const newAdmin: DBUser = {
+        id: "user-admin",
+        username: adminUsername,
+        email: adminEmail,
+        passwordHash: incomingHash,
+        name: adminName,
+        role: "admin",
+        hourlyRate: 250,
+        workType: "full-time",
+        scheduleStart: "09:00",
+        scheduleEnd: "17:00",
+        photoUrl: "",
+        monthlyHoursCap: 160,
+      };
+      db.users.push(newAdmin);
+      writeDB(db);
+    }
+  } catch (err) {
+    console.error("[Credentials Sync Error] Local sync failed:", err);
+  }
+
+  // Sync other seeded users if their custom environment passwords are set
+  try {
+    const db = readDB();
+    let updatedLocal = false;
+    const vaTeamPass = process.env.VA_TEAM_PASSWORD;
+    const vaMariaPass = process.env.VA_MARIA_PASSWORD;
+    const vaJuanPass = process.env.VA_JUAN_PASSWORD;
+
+    if (vaTeamPass) {
+      const u = db.users.find(x => x.username === "va_team");
+      if (u && u.passwordHash !== hashPassword(vaTeamPass)) {
+        u.passwordHash = hashPassword(vaTeamPass);
+        updatedLocal = true;
+      }
+    }
+    if (vaMariaPass) {
+      const u = db.users.find(x => x.username === "va_member_a");
+      if (u && u.passwordHash !== hashPassword(vaMariaPass)) {
+        u.passwordHash = hashPassword(vaMariaPass);
+        updatedLocal = true;
+      }
+    }
+    if (vaJuanPass) {
+      const u = db.users.find(x => x.username === "va_member_b");
+      if (u && u.passwordHash !== hashPassword(vaJuanPass)) {
+        u.passwordHash = hashPassword(vaJuanPass);
+        updatedLocal = true;
+      }
+    }
+    if (updatedLocal) {
+      console.log(`[Credentials Sync] Updated custom VA passwords in local DB.`);
+      writeDB(db);
+    }
+  } catch (err) {
+    console.error("[Credentials Sync Error] Local VA sync failed:", err);
+  }
+
+  // Sync in Supabase if active
+  if (useSupabase && supabase) {
+    try {
+      // 1. Check if admin exists in custom users table
+      const { data: dbUser, error: dbError } = await supabase
+        .from("users")
+        .select("*")
+        .eq("username", adminUsername)
+        .maybeSingle();
+
+      if (dbError) {
+        console.error("[Credentials Sync Error] Supabase user query failed:", dbError);
+      } else if (dbUser) {
+        const mappedUser = mapUserFromDb(dbUser);
+        if (mappedUser.passwordHash !== incomingHash || mappedUser.email !== adminEmail || mappedUser.name !== adminName) {
+          console.log(`[Credentials Sync] Updating admin credentials in Supabase 'users' table...`);
+          const dbUpdates = await mapUserToDb({ passwordHash: incomingHash, email: adminEmail, name: adminName });
+          await supabase.from("users").update(dbUpdates).eq("id", mappedUser.id);
+        }
+
+        // 2. Also ensure password is in sync in Supabase Auth (GoTrue)
+        const emailStr = adminEmail || mappedUser.email;
+        if (emailStr) {
+          const { error: authUpdateError } = await supabase.auth.admin.updateUserById(mappedUser.id, {
+            password: adminPassword,
+          });
+          if (authUpdateError) {
+            console.log(`[Credentials Sync] Auth password update failed (likely user not registered in GoTrue yet). Registering user...`);
+            // Try creating user in GoTrue Auth
+            const { error: authCreateError } = await supabase.auth.admin.createUser({
+              email: emailStr,
+              password: adminPassword,
+              email_confirm: true,
+            });
+            if (authCreateError) {
+              console.error("[Credentials Sync Error] Failed to create GoTrue auth credentials:", authCreateError);
+            } else {
+              console.log("[Credentials Sync] Successfully provisioned GoTrue auth credentials for admin.");
+            }
+          } else {
+            console.log("[Credentials Sync] Successfully synced admin password with GoTrue auth.");
+          }
+        }
+      } else {
+        // If they don't exist in Supabase users table, we can insert them!
+        console.log(`[Credentials Sync] Admin user "${adminUsername}" not found in Supabase 'users' table. Inserting...`);
+        const newAdmin: DBUser = {
+          id: "user-admin",
+          username: adminUsername,
+          email: adminEmail,
+          passwordHash: incomingHash,
+          name: adminName,
+          role: "admin",
+          hourlyRate: 250,
+          workType: "full-time",
+          scheduleStart: "09:00",
+          scheduleEnd: "17:00",
+          photoUrl: "",
+          monthlyHoursCap: 160,
+        };
+        const dbInsert = await mapUserToDb(newAdmin);
+        const { error: insertError } = await supabase.from("users").insert([dbInsert]);
+        if (insertError) {
+          console.error("[Credentials Sync Error] Failed to insert admin into Supabase 'users' table:", insertError);
+        } else {
+          console.log(`[Credentials Sync] Admin user "${adminUsername}" inserted into Supabase 'users' table successfully.`);
+          // Provision in GoTrue Auth as well
+          const { error: authCreateError } = await supabase.auth.admin.createUser({
+            email: adminEmail,
+            password: adminPassword,
+            email_confirm: true,
+          });
+          if (authCreateError) {
+            console.error("[Credentials Sync Error] Failed to create GoTrue auth credentials post-insert:", authCreateError);
+          } else {
+            console.log("[Credentials Sync] Successfully provisioned GoTrue auth credentials for new admin.");
+          }
+        }
+      }
+
+      // Sync custom passwords for VAs in Supabase if active
+      const vaPasswords = [
+        { username: "va_team", envPass: process.env.VA_TEAM_PASSWORD, email: "va_team@example.com" },
+        { username: "va_member_a", envPass: process.env.VA_MARIA_PASSWORD, email: "va_member_a@example.com" },
+        { username: "va_member_b", envPass: process.env.VA_JUAN_PASSWORD, email: "va_member_b@example.com" }
+      ];
+
+      for (const va of vaPasswords) {
+        if (!va.envPass) continue;
+        const vaHash = hashPassword(va.envPass);
+        const { data: dbVa } = await supabase.from("users").select("*").eq("username", va.username).maybeSingle();
+        if (dbVa) {
+          const mappedVa = mapUserFromDb(dbVa);
+          if (mappedVa.passwordHash !== vaHash) {
+            console.log(`[Credentials Sync] Syncing password hash for ${va.username} in Supabase...`);
+            const dbUpdates = await mapUserToDb({ passwordHash: vaHash });
+            await supabase.from("users").update(dbUpdates).eq("id", mappedVa.id);
+            // Also sync in GoTrue
+            await supabase.auth.admin.updateUserById(mappedVa.id, { password: va.envPass });
+          }
+        }
+      }
+
+    } catch (err) {
+      console.error("[Credentials Sync Error] Supabase sync failed:", err);
+    }
+  }
+}
+
 // Setup Vite & Static Fallback
 async function startServer() {
+  // Sync admin and custom VA credentials from environment variables on startup
+  try {
+    await syncEnvCredentials();
+  } catch (err) {
+    console.error("[Startup Sync Alert] Failed to run credential sync on startup:", err);
+  }
+
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
       server: { middlewareMode: true },
