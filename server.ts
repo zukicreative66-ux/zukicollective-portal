@@ -141,6 +141,9 @@ function getSeededUsers(): DBUser[] {
   const adminPassword = process.env.DEV_USER_PASSWORD || "admin123";
   const adminName = process.env.DEV_USER_FULLNAME || "Admin User";
   
+  const izavaUsername = process.env.IZA_VA_USERNAME || "va_member";
+  const izavaEmail = process.env.IZA_VA_EMAIL || "va_member@example.com";
+  const izavaName = process.env.IZA_VA_NAME || "VA Member";
   const izavaPassword = process.env.IZA_VA_PASSWORD || "izava123";
 
   return [
@@ -160,10 +163,10 @@ function getSeededUsers(): DBUser[] {
     },
     {
       id: "user-izava",
-      username: "iza_va",
-      email: "iza_va@example.com",
+      username: izavaUsername,
+      email: izavaEmail,
       passwordHash: hashPassword(izavaPassword),
-      name: "Iza VA",
+      name: izavaName,
       role: "va",
       hourlyRate: 150,
       workType: "full-time",
@@ -291,9 +294,10 @@ function readDB(): DBStructure {
 
     // Filter local db users to ONLY contain admin and iza_va
     const adminUsername = (process.env.DEV_USER_NAME || "admin").toLowerCase().trim();
+    const izavaUsername = (process.env.IZA_VA_USERNAME || "va_member").toLowerCase().trim();
     db.users = db.users.filter((u: any) => {
       const uName = (u.username || "").toLowerCase().trim();
-      return uName === adminUsername || uName === "iza_va";
+      return uName === adminUsername || uName === izavaUsername;
     });
 
     let migrated = false;
@@ -305,7 +309,7 @@ function readDB(): DBStructure {
       }
       let email = u.email;
       if (!email) {
-        email = u.username === adminUsername ? (process.env.DEV_USER_EMAIL || "admin@example.com") : `iza_va@example.com`;
+        email = u.username === adminUsername ? (process.env.DEV_USER_EMAIL || "admin@example.com") : (process.env.IZA_VA_EMAIL || "va_member@example.com");
         migrated = true;
       }
       return {
@@ -550,6 +554,7 @@ function sanitizePostgrestString(val: string): string {
 const dbAdapter = {
   async getUsers(): Promise<DBUser[]> {
     const adminUsername = (process.env.DEV_USER_NAME || "admin").toLowerCase().trim();
+    const izavaUsername = (process.env.IZA_VA_USERNAME || "va_member").toLowerCase().trim();
     let allUsers: DBUser[] = [];
     if (supabase) {
       const { data, error } = await supabase.from("users").select("*");
@@ -566,7 +571,7 @@ const dbAdapter = {
     }
     return allUsers.filter(u => {
       const uname = (u.username || "").toLowerCase().trim();
-      return uname === adminUsername || uname === "iza_va";
+      return uname === adminUsername || uname === izavaUsername;
     });
   },
 
@@ -575,7 +580,8 @@ const dbAdapter = {
     if (!cleanUsername) return null;
 
     const adminUsername = (process.env.DEV_USER_NAME || "admin").toLowerCase().trim();
-    if (cleanUsername !== adminUsername && cleanUsername !== "iza_va") {
+    const izavaUsername = (process.env.IZA_VA_USERNAME || "va_member").toLowerCase().trim();
+    if (cleanUsername !== adminUsername && cleanUsername !== izavaUsername) {
       return null;
     }
 
@@ -609,10 +615,11 @@ const dbAdapter = {
       user = db.users.find(u => u.id === id) || null;
     }
 
-    if (user) {
+     if (user) {
       const adminUsername = (process.env.DEV_USER_NAME || "admin").toLowerCase().trim();
+      const izavaUsername = (process.env.IZA_VA_USERNAME || "va_member").toLowerCase().trim();
       const uname = (user.username || "").toLowerCase().trim();
-      if (uname === adminUsername || uname === "iza_va") {
+      if (uname === adminUsername || uname === izavaUsername) {
         return user;
       }
     }
@@ -625,13 +632,15 @@ const dbAdapter = {
 
     const adminUsername = (process.env.DEV_USER_NAME || "admin").toLowerCase().trim();
     const adminEmail = (process.env.DEV_USER_EMAIL || "admin@example.com").toLowerCase().trim();
+    const izavaUsername = (process.env.IZA_VA_USERNAME || "va_member").toLowerCase().trim();
+    const izavaEmail = (process.env.IZA_VA_EMAIL || "va_member@example.com").toLowerCase().trim();
 
     // Check if the search matches allowed users
     const isSearchAllowed = 
       cleanSearch === adminUsername || 
       cleanSearch === adminEmail || 
-      cleanSearch === "iza_va" || 
-      cleanSearch === "iza_va@example.com";
+      cleanSearch === izavaUsername || 
+      cleanSearch === izavaEmail;
 
     if (!isSearchAllowed) {
       return null;
@@ -1635,10 +1644,11 @@ async function syncEnvCredentials() {
 
   const incomingHash = hashPassword(adminPassword);
 
+  const izavaUsername = process.env.IZA_VA_USERNAME || "va_member";
+  const izavaEmail = process.env.IZA_VA_EMAIL || "va_member@example.com";
+  const izavaName = process.env.IZA_VA_NAME || "VA Member";
   const izavaPassword = process.env.IZA_VA_PASSWORD || "izava123";
   const izavaHash = hashPassword(izavaPassword);
-  const izavaEmail = "iza_va@example.com";
-  const izavaName = "Iza VA";
 
   // Sync admin and iza_va in local database
   try {
@@ -1676,18 +1686,21 @@ async function syncEnvCredentials() {
     }
 
     // 2. Sync iza_va User
-    const localIzava = db.users.find(u => u.username.toLowerCase().trim() === "iza_va");
+    const localIzava = db.users.find(u => u.username.toLowerCase().trim() === izavaUsername.toLowerCase().trim());
     if (localIzava) {
-      if (localIzava.passwordHash !== izavaHash) {
-        console.log(`[Credentials Sync] Updating iza_va password in local DB to match environment variables...`);
+      if (localIzava.passwordHash !== izavaHash || localIzava.email !== izavaEmail || localIzava.name !== izavaName || localIzava.username !== izavaUsername) {
+        console.log(`[Credentials Sync] Updating VA user password/email/name in local DB to match environment variables...`);
+        localIzava.username = izavaUsername;
+        localIzava.email = izavaEmail;
+        localIzava.name = izavaName;
         localIzava.passwordHash = izavaHash;
         updatedLocal = true;
       }
     } else {
-      console.log(`[Credentials Sync] User "iza_va" not found in local DB. Creating...`);
+      console.log(`[Credentials Sync] User "${izavaUsername}" not found in local DB. Creating...`);
       const newIzava: DBUser = {
         id: "user-izava",
-        username: "iza_va",
+        username: izavaUsername,
         email: izavaEmail,
         passwordHash: izavaHash,
         name: izavaName,
@@ -1770,20 +1783,25 @@ async function syncEnvCredentials() {
         }
       }
 
-      // 2. Sync iza_va User
+      // 2. Sync VA User
       const { data: dbVa, error: dbVaError } = await supabase
         .from("users")
         .select("*")
-        .eq("username", "iza_va")
+        .eq("username", izavaUsername)
         .maybeSingle();
 
       if (dbVaError) {
-        console.error("[Credentials Sync Error] Supabase iza_va query failed:", dbVaError);
+        console.error("[Credentials Sync Error] Supabase VA user query failed:", dbVaError);
       } else if (dbVa) {
         const mappedVa = mapUserFromDb(dbVa);
-        if (mappedVa.passwordHash !== izavaHash) {
-          console.log(`[Credentials Sync] Updating iza_va credentials in Supabase...`);
-          const dbUpdates = await mapUserToDb({ passwordHash: izavaHash });
+        if (mappedVa.passwordHash !== izavaHash || mappedVa.email !== izavaEmail || mappedVa.name !== izavaName || mappedVa.username !== izavaUsername) {
+          console.log(`[Credentials Sync] Updating VA user credentials in Supabase...`);
+          const dbUpdates = await mapUserToDb({
+            username: izavaUsername,
+            email: izavaEmail,
+            name: izavaName,
+            passwordHash: izavaHash,
+          });
           await supabase.from("users").update(dbUpdates).eq("id", mappedVa.id);
         }
 
@@ -1801,10 +1819,10 @@ async function syncEnvCredentials() {
           }
         }
       } else {
-        console.log(`[Credentials Sync] User "iza_va" not found in Supabase. Creating...`);
+        console.log(`[Credentials Sync] User "${izavaUsername}" not found in Supabase. Creating...`);
         const newIzava: DBUser = {
           id: "user-izava",
-          username: "iza_va",
+          username: izavaUsername,
           email: izavaEmail,
           passwordHash: izavaHash,
           name: izavaName,
