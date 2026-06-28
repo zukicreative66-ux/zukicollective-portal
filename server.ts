@@ -141,9 +141,7 @@ function getSeededUsers(): DBUser[] {
   const adminPassword = process.env.DEV_USER_PASSWORD || "admin123";
   const adminName = process.env.DEV_USER_FULLNAME || "Admin User";
   
-  const vaTeamPassword = process.env.VA_TEAM_PASSWORD || "vateam123";
-  const vaMemberAPassword = process.env.VA_MARIA_PASSWORD || "vamembera123";
-  const vaMemberBPassword = process.env.VA_JUAN_PASSWORD || "vamemberb123";
+  const izavaPassword = process.env.IZA_VA_PASSWORD || "izava123";
 
   return [
     {
@@ -161,25 +159,11 @@ function getSeededUsers(): DBUser[] {
       monthlyHoursCap: 160,
     },
     {
-      id: "user-va",
-      username: "va_team",
-      email: "va_team@example.com",
-      passwordHash: hashPassword(vaTeamPassword),
-      name: "VA Team",
-      role: "va",
-      hourlyRate: 200,
-      workType: "full-time",
-      scheduleStart: "09:00",
-      scheduleEnd: "14:00",
-      photoUrl: "",
-      monthlyHoursCap: 120,
-    },
-    {
-      id: "user-maria",
-      username: "va_member_a",
-      email: "va_member_a@example.com",
-      passwordHash: hashPassword(vaMemberAPassword),
-      name: "VA Member A",
+      id: "user-izava",
+      username: "iza_va",
+      email: "iza_va@example.com",
+      passwordHash: hashPassword(izavaPassword),
+      name: "Iza VA",
       role: "va",
       hourlyRate: 150,
       workType: "full-time",
@@ -187,20 +171,6 @@ function getSeededUsers(): DBUser[] {
       scheduleEnd: "17:00",
       photoUrl: "",
       monthlyHoursCap: 160,
-    },
-    {
-      id: "user-juan",
-      username: "va_member_b",
-      email: "va_member_b@example.com",
-      passwordHash: hashPassword(vaMemberBPassword),
-      name: "VA Member B",
-      role: "va",
-      hourlyRate: 200,
-      workType: "part-time",
-      scheduleStart: "13:00",
-      scheduleEnd: "15:00",
-      photoUrl: "",
-      monthlyHoursCap: 40,
     }
   ];
 }
@@ -319,6 +289,13 @@ function readDB(): DBStructure {
     if (!db.tasks) db.tasks = [];
     if (!db.users) db.users = [];
 
+    // Filter local db users to ONLY contain admin and iza_va
+    const adminUsername = (process.env.DEV_USER_NAME || "admin").toLowerCase().trim();
+    db.users = db.users.filter((u: any) => {
+      const uName = (u.username || "").toLowerCase().trim();
+      return uName === adminUsername || uName === "iza_va";
+    });
+
     let migrated = false;
     db.users = db.users.map((u: any) => {
       let pwd = u.passwordHash;
@@ -328,31 +305,31 @@ function readDB(): DBStructure {
       }
       let email = u.email;
       if (!email) {
-        email = u.username === (process.env.DEV_USER_NAME || "admin") ? (process.env.DEV_USER_EMAIL || "admin@example.com") : `${u.username}@example.com`;
+        email = u.username === adminUsername ? (process.env.DEV_USER_EMAIL || "admin@example.com") : `iza_va@example.com`;
         migrated = true;
       }
       return {
         ...u,
         email,
         passwordHash: pwd,
-        workType: u.workType || (u.role === 'admin' ? 'full-time' : (u.username === 'va_member_b' ? 'part-time' : 'full-time')),
+        workType: u.workType || (u.role === 'admin' ? 'full-time' : 'full-time'),
         scheduleStart: u.scheduleStart || "09:00",
-        scheduleEnd: u.scheduleEnd || (u.username === 'va_member_b' ? "15:00" : (u.username === 'va_team' ? "14:00" : "17:00")),
-        monthlyHoursCap: u.monthlyHoursCap || (u.username === 'va_member_b' ? 40 : (u.username === 'va_team' ? 120 : 160)),
+        scheduleEnd: u.scheduleEnd || "17:00",
+        monthlyHoursCap: u.monthlyHoursCap || 160,
         photoUrl: u.photoUrl || "",
       };
     });
 
     const usersToVerify = defaultDB.users;
     usersToVerify.forEach(seeded => {
-      const exists = db.users.some((u: any) => u.username === seeded.username);
+      const exists = db.users.some((u: any) => u.username.toLowerCase().trim() === seeded.username.toLowerCase().trim());
       if (!exists) {
         db.users.push(seeded);
         migrated = true;
       }
     });
 
-    if (migrated) {
+    if (migrated || raw.includes("va_team")) {
       try {
         fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2), "utf8");
       } catch (err) {
@@ -375,8 +352,11 @@ function writeDB(data: DBStructure) {
   }
 }
 
-// Ensure database is initialized
+// Ensure database is initialized and credentials are synced asynchronously
 readDB();
+syncEnvCredentials().catch(err => {
+  console.error("[Startup Sync Alert] Failed to run credential sync on initialization:", err);
+});
 
 // Dynamic casing detection and column mapping layer for Supabase/PostgreSQL compatibility
 let usersColumnCasing: "camel" | "snake" | "lowercase" | null = null;
@@ -569,20 +549,36 @@ function sanitizePostgrestString(val: string): string {
 // Unified Database Adapter Layer
 const dbAdapter = {
   async getUsers(): Promise<DBUser[]> {
+    const adminUsername = (process.env.DEV_USER_NAME || "admin").toLowerCase().trim();
+    let allUsers: DBUser[] = [];
     if (supabase) {
       const { data, error } = await supabase.from("users").select("*");
       if (!error && data) {
-        return data.map(mapUserFromDb);
+        allUsers = data.map(mapUserFromDb);
+      } else {
+        console.error("[Supabase Error] getUsers fallback to local:", error);
+        const db = readDB();
+        allUsers = db.users;
       }
-      console.error("[Supabase Error] getUsers fallback to local:", error);
+    } else {
+      const db = readDB();
+      allUsers = db.users;
     }
-    const db = readDB();
-    return db.users;
+    return allUsers.filter(u => {
+      const uname = (u.username || "").toLowerCase().trim();
+      return uname === adminUsername || uname === "iza_va";
+    });
   },
 
   async getUserByUsername(username: string): Promise<DBUser | null> {
-    const cleanUsername = sanitizePostgrestString(username);
+    const cleanUsername = sanitizePostgrestString(username).toLowerCase().trim();
     if (!cleanUsername) return null;
+
+    const adminUsername = (process.env.DEV_USER_NAME || "admin").toLowerCase().trim();
+    if (cleanUsername !== adminUsername && cleanUsername !== "iza_va") {
+      return null;
+    }
+
     if (supabase) {
       const { data, error } = await supabase
         .from("users")
@@ -596,25 +592,51 @@ const dbAdapter = {
       }
     }
     const db = readDB();
-    return db.users.find(u => u.username.toLowerCase().trim() === cleanUsername.toLowerCase()) || null;
+    return db.users.find(u => u.username.toLowerCase().trim() === cleanUsername) || null;
   },
 
   async getUserById(id: string): Promise<DBUser | null> {
+    let user: DBUser | null = null;
     if (supabase) {
       const { data, error } = await supabase
         .from("users")
         .select("*")
         .eq("id", id)
         .maybeSingle();
-      if (!error && data) return mapUserFromDb(data);
+      if (!error && data) user = mapUserFromDb(data);
+    } else {
+      const db = readDB();
+      user = db.users.find(u => u.id === id) || null;
     }
-    const db = readDB();
-    return db.users.find(u => u.id === id) || null;
+
+    if (user) {
+      const adminUsername = (process.env.DEV_USER_NAME || "admin").toLowerCase().trim();
+      const uname = (user.username || "").toLowerCase().trim();
+      if (uname === adminUsername || uname === "iza_va") {
+        return user;
+      }
+    }
+    return null;
   },
 
   async getUserByEmailOrUsername(searchStr: string): Promise<DBUser | null> {
-    const cleanSearch = sanitizePostgrestString(searchStr.toLowerCase());
+    const cleanSearch = sanitizePostgrestString(searchStr.toLowerCase()).trim();
     if (!cleanSearch) return null;
+
+    const adminUsername = (process.env.DEV_USER_NAME || "admin").toLowerCase().trim();
+    const adminEmail = (process.env.DEV_USER_EMAIL || "admin@example.com").toLowerCase().trim();
+
+    // Check if the search matches allowed users
+    const isSearchAllowed = 
+      cleanSearch === adminUsername || 
+      cleanSearch === adminEmail || 
+      cleanSearch === "iza_va" || 
+      cleanSearch === "iza_va@example.com";
+
+    if (!isSearchAllowed) {
+      return null;
+    }
+
     if (supabase) {
       const { data, error } = await supabase
         .from("users")
@@ -916,118 +938,130 @@ async function getUserFromToken(authHeader?: string) {
 
 // 1. Auth Endpoint (Protected with IP rate limiting and username brute force lockout)
 app.post("/api/auth/login", ipRateLimiter(60000, 10, "Too many login attempts from this IP. Please try again in 1 minute."), async (req, res) => {
-  const { username, password } = req.body;
-  if (!username || !password) {
-    res.status(400).json({ error: "Username and password are required" });
-    return;
-  }
+  try {
+    const { username, password } = req.body;
+    if (!username || !password) {
+      res.status(400).json({ error: "Username and password are required" });
+      return;
+    }
 
-  const cleanUsername = username.toLowerCase().trim();
+    const cleanUsername = username.toLowerCase().trim();
 
-  // Check username brute-force lockout status
-  const lockData = loginAttempts.get(cleanUsername);
-  if (lockData && Date.now() < lockData.lockUntil) {
-    const remainingMin = Math.ceil((lockData.lockUntil - Date.now()) / 60000);
-    res.status(429).json({ error: `This account is temporarily locked due to too many failed login attempts. Please try again in ${remainingMin} minute(s).` });
-    return;
-  }
+    // Check username brute-force lockout status
+    const lockData = loginAttempts.get(cleanUsername);
+    if (lockData && Date.now() < lockData.lockUntil) {
+      const remainingMin = Math.ceil((lockData.lockUntil - Date.now()) / 60000);
+      res.status(429).json({ error: `This account is temporarily locked due to too many failed login attempts. Please try again in ${remainingMin} minute(s).` });
+      return;
+    }
 
-  const user = await dbAdapter.getUserByUsername(username);
-  if (!user) {
-    res.status(401).json({ error: "Invalid username or password" });
-    return;
-  }
+    const user = await dbAdapter.getUserByUsername(username);
+    if (!user) {
+      res.status(401).json({ error: "Invalid username or password" });
+      return;
+    }
 
-  let token = "";
-  let loginSuccess = false;
+    let token = "";
+    let loginSuccess = false;
 
-  if (useSupabase && supabase) {
-    // Attempt native Supabase Auth (GoTrue) login
-    const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
-      email: user.email,
-      password: password,
-    });
+    if (useSupabase && supabase) {
+      // Attempt native Supabase Auth (GoTrue) login
+      const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
+        email: user.email,
+        password: password,
+      });
 
-    if (!authError && authData?.session) {
-      token = authData.session.access_token;
-      loginSuccess = true;
-    } else {
-      // Automatic on-the-fly migration to GoTrue Auth
-      // If the login failed on Supabase but the password matches our local hash, auto-register them in Supabase Auth!
-      const incomingHash = hashPassword(password);
-      if (user.passwordHash === incomingHash) {
-        console.log(`[Supabase Auth] Migrating existing user ${user.username} with email ${user.email} to GoTrue Auth...`);
-        const { data: newUser, error: createError } = await supabase.auth.admin.createUser({
-          email: user.email,
-          password: password,
-          email_confirm: true,
-        });
+      if (!authError && authData?.session) {
+        token = authData.session.access_token;
+        loginSuccess = true;
+      } else {
+        // Automatic on-the-fly migration to GoTrue Auth
+        // If the login failed on Supabase but the password matches our local hash, auto-register them in Supabase Auth!
+        const incomingHash = hashPassword(password);
+        if (user.passwordHash === incomingHash) {
+          console.log(`[Supabase Auth] Migrating existing user ${user.username} with email ${user.email} to GoTrue Auth...`);
+          if (supabase.auth.admin) {
+            const { data: newUser, error: createError } = await supabase.auth.admin.createUser({
+              email: user.email,
+              password: password,
+              email_confirm: true,
+            });
 
-        if (!createError) {
-          // Retry signing in now that they are registered in GoTrue
-          const { data: retryData, error: retryError } = await supabase.auth.signInWithPassword({
-            email: user.email,
-            password: password,
-          });
-          if (!retryError && retryData?.session) {
-            token = retryData.session.access_token;
-            loginSuccess = true;
+            if (!createError) {
+              // Retry signing in now that they are registered in GoTrue
+              const { data: retryData, error: retryError } = await supabase.auth.signInWithPassword({
+                email: user.email,
+                password: password,
+              });
+              if (!retryError && retryData?.session) {
+                token = retryData.session.access_token;
+                loginSuccess = true;
+              } else {
+                console.error("[Supabase Auth] Retry sign-in failed post-creation:", retryError);
+              }
+            } else {
+              console.error("[Supabase Auth] Automatic GoTrue provisioning failed:", createError);
+            }
           } else {
-            console.error("[Supabase Auth] Retry sign-in failed post-creation:", retryError);
+            console.warn("[Supabase Auth] admin auth is not available. Falling back to local token generation.");
+            // Generate standard fallback token for valid password matching local DB hash
+            token = Buffer.from(user.username).toString("base64");
+            loginSuccess = true;
           }
-        } else {
-          console.error("[Supabase Auth] Automatic GoTrue provisioning failed:", createError);
         }
       }
-    }
-  } else {
-    // Local JSON DB fallback login check
-    const incomingHash = hashPassword(password);
-    if (user.passwordHash === incomingHash) {
-      token = Buffer.from(user.username).toString("base64");
-      loginSuccess = true;
-    }
-  }
-
-  if (!loginSuccess) {
-    const currentAttempts = lockData ? lockData.count : 0;
-    const newCount = currentAttempts + 1;
-    if (newCount >= 5) {
-      loginAttempts.set(cleanUsername, {
-        count: newCount,
-        lockUntil: Date.now() + 15 * 60 * 1000, // 15 minute lockout
-      });
-      res.status(429).json({ error: "Too many failed attempts. This account has been locked for 15 minutes." });
     } else {
-      loginAttempts.set(cleanUsername, {
-        count: newCount,
-        lockUntil: 0,
-      });
-      const remaining = 5 - newCount;
-      res.status(401).json({ error: `Invalid username or password. You have ${remaining} attempt(s) remaining.` });
+      // Local JSON DB fallback login check
+      const incomingHash = hashPassword(password);
+      if (user.passwordHash === incomingHash) {
+        token = Buffer.from(user.username).toString("base64");
+        loginSuccess = true;
+      }
     }
-    return;
+
+    if (!loginSuccess) {
+      const currentAttempts = lockData ? lockData.count : 0;
+      const newCount = currentAttempts + 1;
+      if (newCount >= 5) {
+        loginAttempts.set(cleanUsername, {
+          count: newCount,
+          lockUntil: Date.now() + 15 * 60 * 1000, // 15 minute lockout
+        });
+        res.status(429).json({ error: "Too many failed attempts. This account has been locked for 15 minutes." });
+      } else {
+        loginAttempts.set(cleanUsername, {
+          count: newCount,
+          lockUntil: 0,
+        });
+        const remaining = 5 - newCount;
+        res.status(401).json({ error: `Invalid username or password. You have ${remaining} attempt(s) remaining.` });
+      }
+      return;
+    }
+
+    // Login success: reset failed login attempts
+    loginAttempts.delete(cleanUsername);
+
+    res.json({
+      user: {
+        id: user.id,
+        username: user.username,
+        email: user.email,
+        name: user.name,
+        role: user.role,
+        hourlyRate: user.hourlyRate,
+        workType: user.workType,
+        scheduleStart: user.scheduleStart,
+        scheduleEnd: user.scheduleEnd,
+        monthlyHoursCap: user.monthlyHoursCap,
+        photoUrl: user.photoUrl,
+      },
+      token,
+    });
+  } catch (error: any) {
+    console.error("[Login Handler Exception]:", error);
+    res.status(500).json({ error: "Internal Server Error during authentication login check.", details: error.message });
   }
-
-  // Login success: reset failed login attempts
-  loginAttempts.delete(cleanUsername);
-
-  res.json({
-    user: {
-      id: user.id,
-      username: user.username,
-      email: user.email,
-      name: user.name,
-      role: user.role,
-      hourlyRate: user.hourlyRate,
-      workType: user.workType,
-      scheduleStart: user.scheduleStart,
-      scheduleEnd: user.scheduleEnd,
-      monthlyHoursCap: user.monthlyHoursCap,
-      photoUrl: user.photoUrl,
-    },
-    token,
-  });
 });
 
 // 2. Me Endpoint
@@ -1172,20 +1206,24 @@ app.post("/api/auth/reset-password", ipRateLimiter(60000, 5, "Too many reset ver
     if (useSupabase && supabase) {
       const emailStr = user.email ? user.email.trim() : "";
       if (emailStr) {
-        const { error: updateAuthError } = await supabase.auth.admin.updateUserById(user.id, {
-          password: newPassword,
-        });
-        if (updateAuthError) {
-          console.log("[Supabase Auth] updateUserById failed during reset, attempting admin.createUser fallback. Error:", updateAuthError);
-          // Auto-register/provision in GoTrue Auth if they didn't exist there yet
-          const { error: createAuthError } = await supabase.auth.admin.createUser({
-            email: emailStr,
+        if (supabase.auth.admin) {
+          const { error: updateAuthError } = await supabase.auth.admin.updateUserById(user.id, {
             password: newPassword,
-            email_confirm: true,
           });
-          if (createAuthError) {
-            console.error("[Supabase Auth] Failed to provision/reset password in Supabase Auth GoTrue:", createAuthError);
+          if (updateAuthError) {
+            console.log("[Supabase Auth] updateUserById failed during reset, attempting admin.createUser fallback. Error:", updateAuthError);
+            // Auto-register/provision in GoTrue Auth if they didn't exist there yet
+            const { error: createAuthError } = await supabase.auth.admin.createUser({
+              email: emailStr,
+              password: newPassword,
+              email_confirm: true,
+            });
+            if (createAuthError) {
+              console.error("[Supabase Auth] Failed to provision/reset password in Supabase Auth GoTrue:", createAuthError);
+            }
           }
+        } else {
+          console.warn("[Supabase Auth] admin auth is not available, skipping GoTrue password reset sync.");
         }
       } else {
         console.warn(`[Supabase Auth Warning] User ${user.username} has no email configured, skipping GoTrue credentials sync.`);
@@ -1592,27 +1630,30 @@ app.patch("/api/logs/:id", async (req, res) => {
 async function syncEnvCredentials() {
   const adminUsername = process.env.DEV_USER_NAME || "admin";
   const adminEmail = process.env.DEV_USER_EMAIL || "admin@example.com";
-  const adminPassword = process.env.DEV_USER_PASSWORD;
+  const adminPassword = process.env.DEV_USER_PASSWORD || "admin123";
   const adminName = process.env.DEV_USER_FULLNAME || "Admin User";
-
-  if (!adminPassword) {
-    console.log("[Credentials Sync] DEV_USER_PASSWORD not configured. Skipping credentials sync.");
-    return;
-  }
 
   const incomingHash = hashPassword(adminPassword);
 
-  // Sync in local database if present
+  const izavaPassword = process.env.IZA_VA_PASSWORD || "izava123";
+  const izavaHash = hashPassword(izavaPassword);
+  const izavaEmail = "iza_va@example.com";
+  const izavaName = "Iza VA";
+
+  // Sync admin and iza_va in local database
   try {
     const db = readDB();
+    let updatedLocal = false;
+
+    // 1. Sync Admin User
     const localAdmin = db.users.find(u => u.username.toLowerCase().trim() === adminUsername.toLowerCase().trim());
     if (localAdmin) {
-      if (localAdmin.passwordHash !== incomingHash || localAdmin.email !== adminEmail) {
-        console.log(`[Credentials Sync] Updating admin password hash/email in local DB to match environment variables...`);
+      if (localAdmin.passwordHash !== incomingHash || localAdmin.email !== adminEmail || localAdmin.name !== adminName) {
+        console.log(`[Credentials Sync] Updating admin password/email/name in local DB to match environment variables...`);
         localAdmin.passwordHash = incomingHash;
         localAdmin.email = adminEmail;
         localAdmin.name = adminName;
-        writeDB(db);
+        updatedLocal = true;
       }
     } else {
       console.log(`[Credentials Sync] Admin user "${adminUsername}" not found in local DB. Creating...`);
@@ -1631,53 +1672,48 @@ async function syncEnvCredentials() {
         monthlyHoursCap: 160,
       };
       db.users.push(newAdmin);
+      updatedLocal = true;
+    }
+
+    // 2. Sync iza_va User
+    const localIzava = db.users.find(u => u.username.toLowerCase().trim() === "iza_va");
+    if (localIzava) {
+      if (localIzava.passwordHash !== izavaHash) {
+        console.log(`[Credentials Sync] Updating iza_va password in local DB to match environment variables...`);
+        localIzava.passwordHash = izavaHash;
+        updatedLocal = true;
+      }
+    } else {
+      console.log(`[Credentials Sync] User "iza_va" not found in local DB. Creating...`);
+      const newIzava: DBUser = {
+        id: "user-izava",
+        username: "iza_va",
+        email: izavaEmail,
+        passwordHash: izavaHash,
+        name: izavaName,
+        role: "va",
+        hourlyRate: 150,
+        workType: "full-time",
+        scheduleStart: "09:00",
+        scheduleEnd: "17:00",
+        photoUrl: "",
+        monthlyHoursCap: 160,
+      };
+      db.users.push(newIzava);
+      updatedLocal = true;
+    }
+
+    if (updatedLocal) {
       writeDB(db);
     }
   } catch (err) {
     console.error("[Credentials Sync Error] Local sync failed:", err);
   }
 
-  // Sync other seeded users if their custom environment passwords are set
-  try {
-    const db = readDB();
-    let updatedLocal = false;
-    const vaTeamPass = process.env.VA_TEAM_PASSWORD;
-    const vaMariaPass = process.env.VA_MARIA_PASSWORD;
-    const vaJuanPass = process.env.VA_JUAN_PASSWORD;
-
-    if (vaTeamPass) {
-      const u = db.users.find(x => x.username === "va_team");
-      if (u && u.passwordHash !== hashPassword(vaTeamPass)) {
-        u.passwordHash = hashPassword(vaTeamPass);
-        updatedLocal = true;
-      }
-    }
-    if (vaMariaPass) {
-      const u = db.users.find(x => x.username === "va_member_a");
-      if (u && u.passwordHash !== hashPassword(vaMariaPass)) {
-        u.passwordHash = hashPassword(vaMariaPass);
-        updatedLocal = true;
-      }
-    }
-    if (vaJuanPass) {
-      const u = db.users.find(x => x.username === "va_member_b");
-      if (u && u.passwordHash !== hashPassword(vaJuanPass)) {
-        u.passwordHash = hashPassword(vaJuanPass);
-        updatedLocal = true;
-      }
-    }
-    if (updatedLocal) {
-      console.log(`[Credentials Sync] Updated custom VA passwords in local DB.`);
-      writeDB(db);
-    }
-  } catch (err) {
-    console.error("[Credentials Sync Error] Local VA sync failed:", err);
-  }
-
   // Sync in Supabase if active
   if (useSupabase && supabase) {
     try {
-      // 1. Check if admin exists in custom users table
+      // 1. Sync Admin User
       const { data: dbUser, error: dbError } = await supabase
         .from("users")
         .select("*")
@@ -1685,41 +1721,30 @@ async function syncEnvCredentials() {
         .maybeSingle();
 
       if (dbError) {
-        console.error("[Credentials Sync Error] Supabase user query failed:", dbError);
+        console.error("[Credentials Sync Error] Supabase admin query failed:", dbError);
       } else if (dbUser) {
         const mappedUser = mapUserFromDb(dbUser);
         if (mappedUser.passwordHash !== incomingHash || mappedUser.email !== adminEmail || mappedUser.name !== adminName) {
-          console.log(`[Credentials Sync] Updating admin credentials in Supabase 'users' table...`);
+          console.log(`[Credentials Sync] Updating admin credentials in Supabase...`);
           const dbUpdates = await mapUserToDb({ passwordHash: incomingHash, email: adminEmail, name: adminName });
           await supabase.from("users").update(dbUpdates).eq("id", mappedUser.id);
         }
 
-        // 2. Also ensure password is in sync in Supabase Auth (GoTrue)
-        const emailStr = adminEmail || mappedUser.email;
-        if (emailStr) {
+        // Also ensure password is in sync in Supabase Auth (GoTrue)
+        if (supabase.auth.admin) {
           const { error: authUpdateError } = await supabase.auth.admin.updateUserById(mappedUser.id, {
             password: adminPassword,
           });
           if (authUpdateError) {
-            console.log(`[Credentials Sync] Auth password update failed (likely user not registered in GoTrue yet). Registering user...`);
-            // Try creating user in GoTrue Auth
-            const { error: authCreateError } = await supabase.auth.admin.createUser({
-              email: emailStr,
+            await supabase.auth.admin.createUser({
+              email: adminEmail,
               password: adminPassword,
               email_confirm: true,
             });
-            if (authCreateError) {
-              console.error("[Credentials Sync Error] Failed to create GoTrue auth credentials:", authCreateError);
-            } else {
-              console.log("[Credentials Sync] Successfully provisioned GoTrue auth credentials for admin.");
-            }
-          } else {
-            console.log("[Credentials Sync] Successfully synced admin password with GoTrue auth.");
           }
         }
       } else {
-        // If they don't exist in Supabase users table, we can insert them!
-        console.log(`[Credentials Sync] Admin user "${adminUsername}" not found in Supabase 'users' table. Inserting...`);
+        console.log(`[Credentials Sync] Admin user "${adminUsername}" not found in Supabase. Creating...`);
         const newAdmin: DBUser = {
           id: "user-admin",
           username: adminUsername,
@@ -1735,48 +1760,72 @@ async function syncEnvCredentials() {
           monthlyHoursCap: 160,
         };
         const dbInsert = await mapUserToDb(newAdmin);
-        const { error: insertError } = await supabase.from("users").insert([dbInsert]);
-        if (insertError) {
-          console.error("[Credentials Sync Error] Failed to insert admin into Supabase 'users' table:", insertError);
-        } else {
-          console.log(`[Credentials Sync] Admin user "${adminUsername}" inserted into Supabase 'users' table successfully.`);
-          // Provision in GoTrue Auth as well
-          const { error: authCreateError } = await supabase.auth.admin.createUser({
+        await supabase.from("users").insert([dbInsert]);
+        if (supabase.auth.admin) {
+          await supabase.auth.admin.createUser({
             email: adminEmail,
             password: adminPassword,
             email_confirm: true,
           });
-          if (authCreateError) {
-            console.error("[Credentials Sync Error] Failed to create GoTrue auth credentials post-insert:", authCreateError);
-          } else {
-            console.log("[Credentials Sync] Successfully provisioned GoTrue auth credentials for new admin.");
-          }
         }
       }
 
-      // Sync custom passwords for VAs in Supabase if active
-      const vaPasswords = [
-        { username: "va_team", envPass: process.env.VA_TEAM_PASSWORD, email: "va_team@example.com" },
-        { username: "va_member_a", envPass: process.env.VA_MARIA_PASSWORD, email: "va_member_a@example.com" },
-        { username: "va_member_b", envPass: process.env.VA_JUAN_PASSWORD, email: "va_member_b@example.com" }
-      ];
+      // 2. Sync iza_va User
+      const { data: dbVa, error: dbVaError } = await supabase
+        .from("users")
+        .select("*")
+        .eq("username", "iza_va")
+        .maybeSingle();
 
-      for (const va of vaPasswords) {
-        if (!va.envPass) continue;
-        const vaHash = hashPassword(va.envPass);
-        const { data: dbVa } = await supabase.from("users").select("*").eq("username", va.username).maybeSingle();
-        if (dbVa) {
-          const mappedVa = mapUserFromDb(dbVa);
-          if (mappedVa.passwordHash !== vaHash) {
-            console.log(`[Credentials Sync] Syncing password hash for ${va.username} in Supabase...`);
-            const dbUpdates = await mapUserToDb({ passwordHash: vaHash });
-            await supabase.from("users").update(dbUpdates).eq("id", mappedVa.id);
-            // Also sync in GoTrue
-            await supabase.auth.admin.updateUserById(mappedVa.id, { password: va.envPass });
+      if (dbVaError) {
+        console.error("[Credentials Sync Error] Supabase iza_va query failed:", dbVaError);
+      } else if (dbVa) {
+        const mappedVa = mapUserFromDb(dbVa);
+        if (mappedVa.passwordHash !== izavaHash) {
+          console.log(`[Credentials Sync] Updating iza_va credentials in Supabase...`);
+          const dbUpdates = await mapUserToDb({ passwordHash: izavaHash });
+          await supabase.from("users").update(dbUpdates).eq("id", mappedVa.id);
+        }
+
+        // Also ensure password is in sync in Supabase Auth (GoTrue)
+        if (supabase.auth.admin) {
+          const { error: authUpdateError } = await supabase.auth.admin.updateUserById(mappedVa.id, {
+            password: izavaPassword,
+          });
+          if (authUpdateError) {
+            await supabase.auth.admin.createUser({
+              email: izavaEmail,
+              password: izavaPassword,
+              email_confirm: true,
+            });
           }
         }
+      } else {
+        console.log(`[Credentials Sync] User "iza_va" not found in Supabase. Creating...`);
+        const newIzava: DBUser = {
+          id: "user-izava",
+          username: "iza_va",
+          email: izavaEmail,
+          passwordHash: izavaHash,
+          name: izavaName,
+          role: "va",
+          hourlyRate: 150,
+          workType: "full-time",
+          scheduleStart: "09:00",
+          scheduleEnd: "17:00",
+          photoUrl: "",
+          monthlyHoursCap: 160,
+        };
+        const dbInsert = await mapUserToDb(newIzava);
+        await supabase.from("users").insert([dbInsert]);
+        if (supabase.auth.admin) {
+          await supabase.auth.admin.createUser({
+            email: izavaEmail,
+            password: izavaPassword,
+            email_confirm: true,
+          });
+        }
       }
-
     } catch (err) {
       console.error("[Credentials Sync Error] Supabase sync failed:", err);
     }
