@@ -30,6 +30,17 @@ export default function TimeTrackerView({ user, logs, onRefreshLogs, token }: Ti
 
   const timerRef = useRef<NodeJS.Timeout | null>(null);
 
+  const readResponsePayload = async (response: Response) => {
+    const text = await response.text();
+    if (!text) return null;
+
+    try {
+      return JSON.parse(text);
+    } catch {
+      return text;
+    }
+  };
+
   // Sync active log from parent logs list
   useEffect(() => {
     const active = logs.find((l) => l.userId === user.id && l.endTime === null);
@@ -90,8 +101,11 @@ export default function TimeTrackerView({ user, logs, onRefreshLogs, token }: Ti
       });
 
       if (!response.ok) {
-        const err = await response.json();
-        throw new Error(err.error || 'Failed to clock in');
+        const payload = await readResponsePayload(response);
+        const message = payload && typeof payload === 'object' && 'error' in payload
+          ? String((payload as any).error)
+          : 'Failed to clock in';
+        throw new Error(message);
       }
 
       setSuccessMessage('Successfully clocked in. Shift timer started!');
@@ -125,8 +139,11 @@ export default function TimeTrackerView({ user, logs, onRefreshLogs, token }: Ti
       });
 
       if (!response.ok) {
-        const err = await response.json();
-        throw new Error(err.error || 'Failed to clock out');
+        const payload = await readResponsePayload(response);
+        const message = payload && typeof payload === 'object' && 'error' in payload
+          ? String((payload as any).error)
+          : 'Failed to clock out';
+        throw new Error(message);
       }
 
       setSuccessMessage('Shift logged successfully! Great work.');
@@ -179,8 +196,11 @@ export default function TimeTrackerView({ user, logs, onRefreshLogs, token }: Ti
       });
 
       if (!response.ok) {
-        const err = await response.json();
-        throw new Error(err.error || 'Failed to submit manual log');
+        const payload = await readResponsePayload(response);
+        const message = payload && typeof payload === 'object' && 'error' in payload
+          ? String((payload as any).error)
+          : 'Failed to submit manual log';
+        throw new Error(message);
       }
 
       setSuccessMessage('Manual log recorded successfully!');
@@ -205,8 +225,11 @@ export default function TimeTrackerView({ user, logs, onRefreshLogs, token }: Ti
         credentials: 'include',
       });
       if (!response.ok) {
-        const err = await response.json();
-        throw new Error(err.error || 'Failed to delete');
+        const payload = await readResponsePayload(response);
+        const message = payload && typeof payload === 'object' && 'error' in payload
+          ? String((payload as any).error)
+          : 'Failed to delete';
+        throw new Error(message);
       }
       setSuccessMessage('Log record deleted successfully.');
       onRefreshLogs();

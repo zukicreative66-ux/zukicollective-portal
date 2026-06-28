@@ -7,7 +7,7 @@ import { createClient } from "@supabase/supabase-js";
 import { loadPortalEnvironment } from "./auth-env";
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = Number(process.env.PORT || 3000);
 
 const isVercel = !!process.env.VERCEL;
 const portalEnv = loadPortalEnvironment();
@@ -629,12 +629,6 @@ const dbAdapter = {
     const cleanUsername = sanitizePostgrestString(username).toLowerCase().trim();
     if (!cleanUsername) return null;
 
-    const adminUsername = (process.env.DEV_USER_NAME || "admin").toLowerCase().trim();
-    const izavaUsername = (process.env.IZA_VA_USERNAME || "va_member").toLowerCase().trim();
-    if (cleanUsername !== adminUsername && cleanUsername !== izavaUsername) {
-      return null;
-    }
-
     if (supabase) {
       const { data, error } = await supabase
         .from("users")
@@ -647,6 +641,7 @@ const dbAdapter = {
         console.error("[Supabase Error] getUserByUsername fallback:", error);
       }
     }
+
     const db = readDB();
     return db.users.find(u => u.username.toLowerCase().trim() === cleanUsername) || null;
   },
@@ -665,36 +660,12 @@ const dbAdapter = {
       user = db.users.find(u => u.id === id) || null;
     }
 
-     if (user) {
-      const adminUsername = (process.env.DEV_USER_NAME || "admin").toLowerCase().trim();
-      const izavaUsername = (process.env.IZA_VA_USERNAME || "va_member").toLowerCase().trim();
-      const uname = (user.username || "").toLowerCase().trim();
-      if (uname === adminUsername || uname === izavaUsername) {
-        return user;
-      }
-    }
-    return null;
+    return user;
   },
 
   async getUserByEmailOrUsername(searchStr: string): Promise<DBUser | null> {
     const cleanSearch = sanitizePostgrestString(searchStr.toLowerCase()).trim();
     if (!cleanSearch) return null;
-
-    const adminUsername = (process.env.DEV_USER_NAME || "admin").toLowerCase().trim();
-    const adminEmail = (process.env.DEV_USER_EMAIL || "admin@example.com").toLowerCase().trim();
-    const izavaUsername = (process.env.IZA_VA_USERNAME || "va_member").toLowerCase().trim();
-    const izavaEmail = (process.env.IZA_VA_EMAIL || "va_member@example.com").toLowerCase().trim();
-
-    // Check if the search matches allowed users
-    const isSearchAllowed = 
-      cleanSearch === adminUsername || 
-      cleanSearch === adminEmail || 
-      cleanSearch === izavaUsername || 
-      cleanSearch === izavaEmail;
-
-    if (!isSearchAllowed) {
-      return null;
-    }
 
     if (supabase) {
       const { data, error } = await supabase
@@ -704,6 +675,7 @@ const dbAdapter = {
         .maybeSingle();
       if (!error && data) return mapUserFromDb(data);
     }
+
     const db = readDB();
     return db.users.find(u => u.username.toLowerCase().trim() === cleanSearch || u.email.toLowerCase().trim() === cleanSearch) || null;
   },
@@ -992,32 +964,17 @@ async function getUserFromToken(authHeader?: string, req?: express.Request) {
   const token = req ? readSessionToken(req) : (authHeader && authHeader.startsWith("Bearer ") ? authHeader.split(" ")[1] : null);
   if (!token) return null;
 
-  const existingSession = sessionStore.get(token);
-  if (existingSession) {
-    if (existingSession.expiresAt <= Date.now()) {
-      sessionStore.delete(token);
-      return null;
-    }
-
-    return await dbAdapter.getUserById(existingSession.userId);
-  }
-
   try {
     if (useSupabase && supabase) {
       const { data: { user: authUser }, error } = await supabase.auth.getUser(token);
       if (error || !authUser) {
-        try {
-          const username = Buffer.from(token, "base64").toString("utf8");
-          return await dbAdapter.getUserByUsername(username);
-        } catch (e) {
-          return null;
-        }
+        return null;
       }
       return await dbAdapter.getUserByEmailOrUsername(authUser.email!);
-    } else {
-      const username = Buffer.from(token, "base64").toString("utf8");
-      return await dbAdapter.getUserByUsername(username);
     }
+
+    const username = Buffer.from(token, "base64").toString("utf8");
+    return await dbAdapter.getUserByUsername(username);
   } catch (e) {
     return null;
   }
@@ -1048,7 +1005,7 @@ app.post("/api/auth/login", ipRateLimiter(60000, 10, "Too many login attempts fr
       return;
     }
 
-    let token = "";
+    let authToken = "";
     let loginSuccess = false;
     const passwordMatches = verifyPassword(password, user.passwordHash);
 
@@ -1060,7 +1017,7 @@ app.post("/api/auth/login", ipRateLimiter(60000, 10, "Too many login attempts fr
       });
 
       if (!authError && authData?.session) {
-        token = authData.session.access_token;
+        authToken = authData.session.access_token;
         loginSuccess = true;
       } else {
         // Automatic on-the-fly migration to GoTrue Auth
@@ -1081,7 +1038,7 @@ app.post("/api/auth/login", ipRateLimiter(60000, 10, "Too many login attempts fr
                 password: password,
               });
               if (!retryError && retryData?.session) {
-                token = retryData.session.access_token;
+                authToken = retryData.session.access_token;
                 loginSuccess = true;
               } else {
                 console.error("[Supabase Auth] Retry sign-in failed post-creation:", retryError);
@@ -1092,7 +1049,7 @@ app.post("/api/auth/login", ipRateLimiter(60000, 10, "Too many login attempts fr
           } else {
             console.warn("[Supabase Auth] admin auth is not available. Falling back to local token generation.");
             // Generate standard fallback token for valid password matching local DB hash
-            token = Buffer.from(user.username).toString("base64");
+            authToken = Buffer.from(user.username).toString("base64");
             loginSuccess = true;
           }
         }
@@ -1100,7 +1057,7 @@ app.post("/api/auth/login", ipRateLimiter(60000, 10, "Too many login attempts fr
     } else {
       // Local JSON DB fallback login check
       if (passwordMatches) {
-        token = Buffer.from(user.username).toString("base64");
+        authToken = Buffer.from(user.username).toString("base64");
         loginSuccess = true;
       }
     }
@@ -1132,12 +1089,7 @@ app.post("/api/auth/login", ipRateLimiter(60000, 10, "Too many login attempts fr
       await dbAdapter.updateUser(user.id, { passwordHash: hashPassword(password) });
     }
 
-    const sessionToken = crypto.randomBytes(32).toString("hex");
-    sessionStore.set(sessionToken, {
-      userId: user.id,
-      expiresAt: Date.now() + 1000 * 60 * 60 * 24 * 7,
-    });
-    setSessionCookie(res, sessionToken);
+    setSessionCookie(res, authToken);
 
     res.json({
       user: {
@@ -1153,7 +1105,6 @@ app.post("/api/auth/login", ipRateLimiter(60000, 10, "Too many login attempts fr
         monthlyHoursCap: user.monthlyHoursCap,
         photoUrl: user.photoUrl,
       },
-      token: sessionToken,
     });
   } catch (error: any) {
     console.error("[Login Handler Exception]:", error);
@@ -1169,7 +1120,6 @@ app.get("/api/auth/me", async (req, res) => {
     return;
   }
 
-  const sessionToken = readSessionToken(req);
   res.json({
     user: {
       id: user.id,
@@ -1184,7 +1134,6 @@ app.get("/api/auth/me", async (req, res) => {
       monthlyHoursCap: user.monthlyHoursCap,
       photoUrl: user.photoUrl,
     },
-    token: sessionToken,
   });
 });
 

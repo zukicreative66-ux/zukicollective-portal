@@ -33,6 +33,17 @@ export default function App() {
   const [maskedEmail, setMaskedEmail] = useState('');
   const [loginSuccessMessage, setLoginSuccessMessage] = useState('');
 
+  const readResponsePayload = async (response: Response) => {
+    const text = await response.text();
+    if (!text) return null;
+
+    try {
+      return JSON.parse(text);
+    } catch {
+      return text;
+    }
+  };
+
   // 1. Initial auth check on mount
   useEffect(() => {
     const checkAuth = async () => {
@@ -40,10 +51,10 @@ export default function App() {
         const response = await fetch('/api/auth/me', { credentials: 'include' });
 
         if (response.ok) {
-          const payload = await response.json();
-          const userData = payload.user || payload;
+          const payload = await readResponsePayload(response);
+          const userData = payload && typeof payload === 'object' && 'user' in payload ? (payload as any).user : payload;
           setUser(userData);
-          setToken(payload.token || 'session');
+          setToken('session');
           setActiveTab(userData.role === 'admin' ? 'admin' : 'dashboard');
         } else {
           setToken(null);
@@ -64,8 +75,8 @@ export default function App() {
     try {
       const response = await fetch('/api/logs', { credentials: 'include' });
       if (response.ok) {
-        const logsData = await response.json();
-        setLogs(logsData);
+        const logsData = await readResponsePayload(response);
+        setLogs(Array.isArray(logsData) ? logsData : []);
       }
     } catch (err) {
       console.error('Error fetching logs:', err);
@@ -95,28 +106,24 @@ export default function App() {
     try {
       const response = await fetch('/api/auth/login', {
         method: 'POST',
+        credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username, password }),
       });
 
       if (!response.ok) {
-        let message = 'Invalid credentials';
-        try {
-          const err = await response.json();
-          message = err.error || message;
-        } catch {
-          const text = await response.text();
-          if (text) {
-            message = text;
-          }
-        }
-        throw new Error(message);
+        const payload = await readResponsePayload(response);
+        const message = payload && typeof payload === 'object' && 'error' in payload
+          ? String((payload as any).error)
+          : (typeof payload === 'string' ? payload : 'Invalid credentials');
+        throw new Error(message || 'Invalid credentials');
       }
 
-      const data = await response.json();
-      setToken(data.token);
-      setUser(data.user);
-      setActiveTab(data.user.role === 'admin' ? 'admin' : 'dashboard');
+      const data = await readResponsePayload(response);
+      const userData = data && typeof data === 'object' && 'user' in data ? (data as any).user : data;
+      setToken('session');
+      setUser(userData);
+      setActiveTab(userData.role === 'admin' ? 'admin' : 'dashboard');
     } catch (err: any) {
       setLoginError(err.message || 'Server connection failed.');
     } finally {
@@ -161,11 +168,14 @@ export default function App() {
       });
 
       if (!response.ok) {
-        const err = await response.json();
-        throw new Error(err.error || 'Failed to trigger password reset request.');
+        const payload = await readResponsePayload(response);
+        const message = payload && typeof payload === 'object' && 'error' in payload
+          ? String((payload as any).error)
+          : 'Failed to trigger password reset request.';
+        throw new Error(message);
       }
 
-      const data = await response.json();
+      const data = await readResponsePayload(response);
       setResetUsername(data.username);
       setMaskedEmail(data.email || 'your registered Gmail');
       setResetSuccessMessage(data.message);
@@ -205,11 +215,14 @@ export default function App() {
       });
 
       if (!response.ok) {
-        const err = await response.json();
-        throw new Error(err.error || 'Failed to update your password.');
+        const payload = await readResponsePayload(response);
+        const message = payload && typeof payload === 'object' && 'error' in payload
+          ? String((payload as any).error)
+          : 'Failed to update your password.';
+        throw new Error(message);
       }
 
-      const data = await response.json();
+      const data = await readResponsePayload(response);
       setLoginSuccessMessage(data.message);
       setLoginError('');
       setResetMode('none');

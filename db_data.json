@@ -2,31 +2,31 @@
   "users": [
     {
       "id": "user-admin",
-      "username": "admin",
-      "email": "admin@example.com",
-      "passwordHash": "240be518fabd2724ddb6f04eeb1da5967448d7e831c08c8fa822809f74c720a9",
-      "name": "Admin User",
+      "username": "zuki_dev",
+      "email": "zukicreative66@gmail.com",
+      "passwordHash": "scrypt$080a0bdd95267dd2520f05df8b315c53$8f4c834450d0e5f22acb393b26e8673fb769b4899444d0aebd51e3dc94ea41e3b0646cd445ad477d8a5fbb5708e84336e2ddc383dc63595c3cb96c3f81851b11",
+      "name": "Zuki Creatives",
       "role": "admin",
       "hourlyRate": 250,
       "workType": "full-time",
       "scheduleStart": "09:00",
       "scheduleEnd": "17:00",
-      "monthlyHoursCap": 160,
-      "photoUrl": ""
+      "photoUrl": "",
+      "monthlyHoursCap": 160
     },
     {
       "id": "user-izava",
-      "username": "va_member",
-      "email": "va_member@example.com",
-      "passwordHash": "f35619a3b45169acb6dd21d57fe14449198571ce667d1d8f154077de51b2c442",
-      "name": "VA Member",
+      "username": "iza_va",
+      "email": "zuki8020@example.com",
+      "passwordHash": "scrypt$733eb80d1654f3096d071cb7dd59975a$3586a15f50c74e8212602b7b6d05f8a1bcb2ca8b174c422c4bdeaec6de151d1412affdac09dc2396ecc74352c061a294ca5d752af7ecc79b576deed3c44f7077",
+      "name": "Iza VA",
       "role": "va",
       "hourlyRate": 150,
       "workType": "full-time",
       "scheduleStart": "09:00",
       "scheduleEnd": "17:00",
-      "monthlyHoursCap": 160,
-      "photoUrl": ""
+      "photoUrl": "",
+      "monthlyHoursCap": 160
     }
   ],
   "logs": [

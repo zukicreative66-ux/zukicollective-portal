@@ -22,6 +22,17 @@ export default function SettingsView({ user, onUserUpdate, token }: SettingsView
   const [isSaving, setIsSaving] = useState(false);
   const [saveStatus, setSaveStatus] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
+  const readResponsePayload = async (response: Response) => {
+    const text = await response.text();
+    if (!text) return null;
+
+    try {
+      return JSON.parse(text);
+    } catch {
+      return text;
+    }
+  };
+
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim()) {
@@ -49,7 +60,8 @@ export default function SettingsView({ user, onUserUpdate, token }: SettingsView
         throw new Error('Failed to update profile settings.');
       }
 
-      const updatedUser = await response.json();
+      const payload = await readResponsePayload(response);
+      const updatedUser = payload && typeof payload === 'object' && 'user' in payload ? (payload as any).user : payload;
       onUserUpdate(updatedUser);
       setSaveStatus({ type: 'success', message: 'Profile settings updated successfully!' });
       setTimeout(() => setSaveStatus(null), 4000);
