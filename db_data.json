@@ -15,73 +15,21 @@
       "photoUrl": ""
     },
     {
-      "id": "user-va",
-      "username": "va_team",
-      "email": "va_team@example.com",
-      "passwordHash": "a1438942b03fb52e690f055615d0fa87be982ec4325a66699321ef7c05051945",
-      "name": "VA Team",
-      "role": "va",
-      "hourlyRate": 200,
-      "workType": "full-time",
-      "scheduleStart": "09:00",
-      "scheduleEnd": "14:00",
-      "monthlyHoursCap": 120,
-      "photoUrl": ""
-    },
-    {
-      "id": "user-maria",
-      "username": "va_member_a",
-      "email": "va_member_a@example.com",
-      "passwordHash": "a1438942b03fb52e690f055615d0fa87be982ec4325a66699321ef7c05051945",
-      "name": "VA Member A",
+      "id": "user-izava",
+      "username": "iza_va",
+      "email": "iza_va@example.com",
+      "passwordHash": "b7352fcb5463f538e1a6be97c231012a67bc4767aa41aa6aa6f6b6b6b6b6b6b6",
+      "name": "Iza VA",
       "role": "va",
       "hourlyRate": 150,
       "workType": "full-time",
       "scheduleStart": "09:00",
       "scheduleEnd": "17:00",
-      "photoUrl": "",
-      "monthlyHoursCap": 160
-    },
-    {
-      "id": "user-juan",
-      "username": "va_member_b",
-      "email": "va_member_b@example.com",
-      "passwordHash": "a1438942b03fb52e690f055615d0fa87be982ec4325a66699321ef7c05051945",
-      "name": "VA Member B",
-      "role": "va",
-      "hourlyRate": 200,
-      "workType": "part-time",
-      "scheduleStart": "13:00",
-      "scheduleEnd": "15:00",
-      "photoUrl": "",
-      "monthlyHoursCap": 40
+      "monthlyHoursCap": 160,
+      "photoUrl": ""
     }
   ],
   "logs": [
-    {
-      "id": "log-1",
-      "userId": "user-maria",
-      "username": "va_member_a",
-      "name": "VA Member A",
-      "role": "va",
-      "startTime": "2026-06-25T12:59:57.779Z",
-      "endTime": "2026-06-25T16:59:57.779Z",
-      "description": "Updated client sheets, parsed email queues, and organized calendar events for next week.",
-      "isManual": false,
-      "durationMinutes": 240
-    },
-    {
-      "id": "log-2",
-      "userId": "user-maria",
-      "username": "va_member_a",
-      "name": "VA Member A",
-      "role": "va",
-      "startTime": "2026-06-26T12:59:57.779Z",
-      "endTime": "2026-06-26T18:29:57.779Z",
-      "description": "Conducted onboarding calling support and formatted the quarterly metric visual deck.",
-      "isManual": false,
-      "durationMinutes": 330
-    },
     {
       "id": "log-3",
       "userId": "user-admin",
