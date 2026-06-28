@@ -12,7 +12,7 @@
  */
 
 // Elegant abstract design agency placeholders from Unsplash (fitting the Peach, Cream & Brown warm brand palette)
-import logoImg from '../assets/images/logo_zuki_1782392716974.png';
+import logoImg from '../assets/images/zukilogo.svg';
 import coverImg from '../assets/images/cover_zuki_1782392733832.png';
 
 // Elegant abstract design agency placeholders from Unsplash (fitting the Peach, Cream & Brown warm brand palette)
