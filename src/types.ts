@@ -10,6 +10,7 @@ export interface User {
   workType: 'part-time' | 'full-time';
   scheduleStart: string; // e.g. "09:00" (24h format)
   scheduleEnd: string; // e.g. "17:00"
+  notificationTime: string; // e.g. "08:45"
   photoUrl?: string; // base64 or url
   monthlyHoursCap: number; // monthly hours cap
 }

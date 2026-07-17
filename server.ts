@@ -105,6 +105,7 @@ interface DBUser {
   workType: 'part-time' | 'full-time';
   scheduleStart: string;
   scheduleEnd: string;
+  notificationTime: string;
   photoUrl?: string;
   monthlyHoursCap: number;
 }
@@ -163,6 +164,7 @@ function getSeededUsers(): DBUser[] {
       workType: "full-time",
       scheduleStart: "09:00",
       scheduleEnd: "17:00",
+      notificationTime: "09:00",
       photoUrl: "",
       monthlyHoursCap: 160,
     },
@@ -173,10 +175,11 @@ function getSeededUsers(): DBUser[] {
       passwordHash: hashPassword(izavaPassword),
       name: izavaName,
       role: "va",
-      hourlyRate: 150,
+      hourlyRate: 200,
       workType: "full-time",
       scheduleStart: "09:00",
       scheduleEnd: "17:00",
+      notificationTime: "09:00",
       photoUrl: "",
       monthlyHoursCap: 50, // Capped at 50 hours as per requirements
     },
@@ -191,6 +194,7 @@ function getSeededUsers(): DBUser[] {
       workType: "part-time",
       scheduleStart: "08:00",
       scheduleEnd: "16:00",
+      notificationTime: "09:00",
       photoUrl: "",
       monthlyHoursCap: 50, // Capped at 50 hours as per requirements
     }
@@ -468,6 +472,7 @@ function mapUserFromDb(row: any): DBUser {
     workType: row.workType ?? row.work_type ?? row.worktype ?? "full-time",
     scheduleStart: row.scheduleStart ?? row.schedule_start ?? row.schedulestart ?? "09:00",
     scheduleEnd: row.scheduleEnd ?? row.schedule_end ?? row.scheduleend ?? "17:00",
+    notificationTime: row.notificationTime ?? row.notification_time ?? row.notificationtime ?? "09:00",
     photoUrl: row.photoUrl ?? row.photo_url ?? row.photourl ?? "",
     monthlyHoursCap: Number(row.monthlyHoursCap ?? row.monthly_hours_cap ?? row.monthlyhourscap ?? 160),
   };
@@ -514,6 +519,7 @@ async function mapUserToDb(user: Partial<DBUser>): Promise<any> {
     if (user.workType !== undefined) { mapped.work_type = user.workType; delete mapped.workType; }
     if (user.scheduleStart !== undefined) { mapped.schedule_start = user.scheduleStart; delete mapped.scheduleStart; }
     if (user.scheduleEnd !== undefined) { mapped.schedule_end = user.scheduleEnd; delete mapped.scheduleEnd; }
+    if (user.notificationTime !== undefined) { mapped.notification_time = user.notificationTime; delete mapped.notificationTime; }
     if (user.photoUrl !== undefined) { mapped.photo_url = user.photoUrl; delete mapped.photoUrl; }
     if (user.monthlyHoursCap !== undefined) { mapped.monthly_hours_cap = user.monthlyHoursCap; delete mapped.monthlyHoursCap; }
   } else if (casing === "lowercase") {
@@ -522,6 +528,7 @@ async function mapUserToDb(user: Partial<DBUser>): Promise<any> {
     if (user.workType !== undefined) { mapped.worktype = user.workType; delete mapped.workType; }
     if (user.scheduleStart !== undefined) { mapped.schedulestart = user.scheduleStart; delete mapped.scheduleStart; }
     if (user.scheduleEnd !== undefined) { mapped.scheduleend = user.scheduleEnd; delete mapped.scheduleEnd; }
+    if (user.notificationTime !== undefined) { mapped.notificationtime = user.notificationTime; delete mapped.notificationTime; }
     if (user.photoUrl !== undefined) { mapped.photourl = user.photoUrl; delete mapped.photoUrl; }
     if (user.monthlyHoursCap !== undefined) { mapped.monthlyhourscap = user.monthlyHoursCap; delete mapped.monthlyHoursCap; }
   }
@@ -1102,6 +1109,7 @@ app.post("/api/auth/login", ipRateLimiter(60000, 10, "Too many login attempts fr
         workType: user.workType,
         scheduleStart: user.scheduleStart,
         scheduleEnd: user.scheduleEnd,
+        notificationTime: user.notificationTime,
         monthlyHoursCap: user.monthlyHoursCap,
         photoUrl: user.photoUrl,
       },
@@ -1130,6 +1138,7 @@ app.get("/api/auth/me", async (req, res) => {
     workType: user.workType,
     scheduleStart: user.scheduleStart,
     scheduleEnd: user.scheduleEnd,
+    notificationTime: user.notificationTime,
     monthlyHoursCap: user.monthlyHoursCap,
     photoUrl: user.photoUrl,
   });
@@ -1347,18 +1356,19 @@ app.patch("/api/users/:id", async (req, res) => {
     res.status(403).json({ error: "Admin access required" });
     return;
   }
-  const { name, workType, scheduleStart, scheduleEnd, monthlyHoursCap, hourlyRate } = req.body;
+  const { name, workType, scheduleStart, scheduleEnd, notificationTime, monthlyHoursCap, hourlyRate } = req.body;
   
   const updates: Partial<DBUser> = {};
   if (name !== undefined) updates.name = name;
   if (workType !== undefined) {
     updates.workType = workType;
     if (hourlyRate === undefined) {
-      updates.hourlyRate = workType === 'part-time' ? 200 : 150;
+      updates.hourlyRate = 200;
     }
   }
   if (scheduleStart !== undefined) updates.scheduleStart = scheduleStart;
   if (scheduleEnd !== undefined) updates.scheduleEnd = scheduleEnd;
+  if (notificationTime !== undefined) updates.notificationTime = notificationTime;
   if (monthlyHoursCap !== undefined) updates.monthlyHoursCap = Number(monthlyHoursCap);
   if (hourlyRate !== undefined) updates.hourlyRate = Number(hourlyRate);
   
@@ -1719,6 +1729,7 @@ async function syncEnvCredentials() {
         workType: "full-time",
         scheduleStart: "09:00",
         scheduleEnd: "17:00",
+        notificationTime: "09:00",
         photoUrl: "",
         monthlyHoursCap: 160,
       };
@@ -1746,10 +1757,11 @@ async function syncEnvCredentials() {
         passwordHash: izavaHash,
         name: izavaName,
         role: "va",
-        hourlyRate: 150,
+        hourlyRate: 200,
         workType: "full-time",
         scheduleStart: "09:00",
         scheduleEnd: "17:00",
+        notificationTime: "09:00",
         photoUrl: "",
         monthlyHoursCap: 160,
       };
@@ -1810,6 +1822,7 @@ async function syncEnvCredentials() {
           workType: "full-time",
           scheduleStart: "09:00",
           scheduleEnd: "17:00",
+          notificationTime: "09:00",
           photoUrl: "",
           monthlyHoursCap: 160,
         };
@@ -1868,10 +1881,11 @@ async function syncEnvCredentials() {
           passwordHash: izavaHash,
           name: izavaName,
           role: "va",
-          hourlyRate: 150,
+          hourlyRate: 200,
           workType: "full-time",
           scheduleStart: "09:00",
           scheduleEnd: "17:00",
+          notificationTime: "09:00",
           photoUrl: "",
           monthlyHoursCap: 160,
         };

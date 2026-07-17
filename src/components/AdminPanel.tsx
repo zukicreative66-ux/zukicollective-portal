@@ -40,6 +40,7 @@ export default function AdminPanel({ user, logs, onRefreshLogs, token }: AdminPa
   const [editUserRate, setEditUserRate] = useState('');
   const [editUserStart, setEditUserStart] = useState('');
   const [editUserEnd, setEditUserEnd] = useState('');
+  const [editUserNotification, setEditUserNotification] = useState('09:00');
   const [editUserCap, setEditUserCap] = useState('');
 
   // Status banners
@@ -484,10 +485,9 @@ export default function AdminPanel({ user, logs, onRefreshLogs, token }: AdminPa
 
   // Dynamic cost calculation based on actual rate in logs, or lookup usersList hourlyRate!
   const totalCost = logs.reduce((sum, l) => {
-    // Find rate of log's user, or default to their logged role
     const matchedUser = usersList.find(u => u.username === l.username);
-    const rate = matchedUser ? matchedUser.hourlyRate : (l.role === 'admin' ? 75 : l.role === 'developer' ? 200 : 150);
-    const hours = l.durationMinutes / 60;
+    const rate = matchedUser ? matchedUser.hourlyRate : (l.role === 'admin' ? 75 : 200);
+    const hours = (l.durationMinutes || 0) / 60;
     return sum + (hours * rate);
   }, 0);
 
@@ -516,7 +516,7 @@ export default function AdminPanel({ user, logs, onRefreshLogs, token }: AdminPa
         const hrs = (log.durationMinutes / 60).toFixed(2);
         
         const matchedUser = usersList.find(u => u.username === log.username);
-        const rate = matchedUser ? matchedUser.hourlyRate : (log.role === 'admin' ? 75 : 150);
+        const rate = matchedUser ? matchedUser.hourlyRate : (log.role === 'admin' ? 75 : 200);
         const total = (parseFloat(hrs) * rate).toFixed(2);
         const cleanDesc = log.description.replace(/"/g, '""');
 
@@ -622,6 +622,7 @@ export default function AdminPanel({ user, logs, onRefreshLogs, token }: AdminPa
     setEditUserRate(u.hourlyRate.toString());
     setEditUserStart(u.scheduleStart);
     setEditUserEnd(u.scheduleEnd);
+    setEditUserNotification(u.notificationTime || '09:00');
     setEditUserCap(u.monthlyHoursCap.toString());
   };
 
@@ -642,9 +643,10 @@ export default function AdminPanel({ user, logs, onRefreshLogs, token }: AdminPa
         body: JSON.stringify({
           name: editUserName.trim(),
           workType: editUserWorkType,
-          hourlyRate: parseFloat(editUserRate) || (editUserWorkType === 'part-time' ? 200 : 150),
+          hourlyRate: parseFloat(editUserRate) || 200,
           scheduleStart: editUserStart,
           scheduleEnd: editUserEnd,
+          notificationTime: editUserNotification,
           monthlyHoursCap: parseInt(editUserCap) || 160
         })
       });
@@ -858,7 +860,7 @@ export default function AdminPanel({ user, logs, onRefreshLogs, token }: AdminPa
                       
                       // Find rate in userList
                       const matchedUser = usersList.find(u => u.username === log.username);
-                      const rate = matchedUser ? matchedUser.hourlyRate : (log.role === 'admin' ? 75 : 150);
+                      const rate = matchedUser ? matchedUser.hourlyRate : (log.role === 'admin' ? 75 : 200);
                       const totalHrs = (log.durationMinutes / 60);
                       const cost = "₱" + (totalHrs * rate).toFixed(2);
 
@@ -1180,7 +1182,7 @@ export default function AdminPanel({ user, logs, onRefreshLogs, token }: AdminPa
                               const val = e.target.value;
                               setEditUserWorkType(val);
                               // Auto set rates based on choice
-                              setEditUserRate(val === 'part-time' ? '200' : '150');
+                              setEditUserRate('200');
                             }}
                             className="bg-brand-brown border border-brand-peach/20 rounded px-2 py-1 text-brand-cream"
                           >
@@ -1233,6 +1235,21 @@ export default function AdminPanel({ user, logs, onRefreshLogs, token }: AdminPa
                           </div>
                         ) : (
                           <span className="font-mono text-brand-cream">{u.scheduleStart} - {u.scheduleEnd}</span>
+                        )}
+                      </div>
+
+                      <div>
+                        <span className="text-[9px] font-mono text-brand-peach/50 uppercase block mb-1">Notification Time</span>
+                        {isEditingUser ? (
+                          <input
+                            type="text"
+                            value={editUserNotification}
+                            placeholder="08:45"
+                            onChange={(e) => setEditUserNotification(e.target.value)}
+                            className="w-full bg-brand-brown border border-brand-peach/20 rounded px-2 py-1 text-brand-cream text-center font-mono text-[11px]"
+                          />
+                        ) : (
+                          <span className="font-mono text-brand-cream">{u.notificationTime || '09:00'}</span>
                         )}
                       </div>
 

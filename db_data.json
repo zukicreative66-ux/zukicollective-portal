@@ -11,6 +11,7 @@
       "workType": "full-time",
       "scheduleStart": "09:00",
       "scheduleEnd": "17:00",
+      "notificationTime": "08:45",
       "photoUrl": "",
       "monthlyHoursCap": 160
     },
@@ -21,7 +22,7 @@
       "passwordHash": "scrypt$06bc372ca4d69f4aab8a1bf7e9762296$0a1c68288013253f31f2ecc6a91e7851ee735a71b58e5a34d30d3aaaff0422401fc1a29026de9c8d7027bfd341df16bcbbf894a69aaade2e586c7e3de1498c6c",
       "name": "Iza VA",
       "role": "va",
-      "hourlyRate": 150,
+      "hourlyRate": 200,
       "workType": "full-time",
       "scheduleStart": "09:00",
       "scheduleEnd": "17:00",
