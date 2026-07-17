@@ -33,6 +33,11 @@ function hashPassword(password: string): string {
   return crypto.createHash("sha256").update(password).digest("hex");
 }
 
+function verifyPassword(password: string, storedHash?: string): boolean {
+  if (!storedHash) return false;
+  return crypto.createHash("sha256").update(password).digest("hex") === storedHash;
+}
+
 async function sendResetEmail(email: string, username: string, otp: string): Promise<boolean> {
   const host = process.env.AGENCY_EMAIL_SMTP_HOST || "smtp.gmail.com";
   const port = parseInt(process.env.AGENCY_EMAIL_SMTP_PORT || "465");
@@ -1021,8 +1026,8 @@ app.post("/api/auth/login", ipRateLimiter(60000, 10, "Too many login attempts fr
       } else {
         // Automatic on-the-fly migration to GoTrue Auth
         // If the login failed on Supabase but the password matches our local hash, auto-register them in Supabase Auth!
-        const incomingHash = hashPassword(password);
-        if (user.passwordHash === incomingHash) {
+        const passwordMatches = verifyPassword(password, user.passwordHash);
+        if (passwordMatches) {
           console.log(`[Supabase Auth] Migrating existing user ${user.username} with email ${user.email} to GoTrue Auth...`);
           if (supabase.auth.admin) {
             const { data: newUser, error: createError } = await supabase.auth.admin.createUser({
@@ -1056,10 +1061,8 @@ app.post("/api/auth/login", ipRateLimiter(60000, 10, "Too many login attempts fr
       }
     } else {
       // Local JSON DB fallback login check
-      const incomingHash = hashPassword(password);
-      if (user.passwordHash === incomingHash) {
-        token = Buffer.from(user.username).toString("base64");
-        loginSuccess = true;
+        const passwordMatches = verifyPassword(password, user.passwordHash);
+        if (passwordMatches) {
       }
     }
 

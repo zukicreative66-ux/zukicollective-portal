@@ -1319,7 +1319,7 @@ export default function AdminPanel({ user, logs, onRefreshLogs, token }: AdminPa
               {['Todo', 'In Progress', 'In Review', 'Completed'].map((statusOption) => {
                 const statusFilteredTasks = tasksList.filter(t => {
                   if (t.status !== statusOption) return false;
-                  if (filterTaskUser !== 'all' && t.username !== filterTaskUser) return false;
+                  if (filterTaskUser !== 'all' && t.userName !== filterTaskUser) return false;
                   return true;
                 });
 
@@ -1339,7 +1339,7 @@ export default function AdminPanel({ user, logs, onRefreshLogs, token }: AdminPa
                         <div className="text-center py-10 text-[10px] text-brand-cream/30 italic">No tasks here</div>
                       ) : (
                         statusFilteredTasks.map((task) => {
-                          const owner = usersList.find(u => u.username === task.username);
+                          const owner = usersList.find(u => u.username === task.userName);
                           return (
                             <div key={task.id} className="bg-brand-brown-card p-3 rounded-xl border border-brand-peach/5 space-y-2.5">
                               {/* Task header tags */}
@@ -1369,13 +1369,13 @@ export default function AdminPanel({ user, logs, onRefreshLogs, token }: AdminPa
                               <div className="pt-2 border-t border-brand-peach/5 flex items-center gap-1.5">
                                 <div className="h-5 w-5 rounded-full bg-brand-peach/10 flex items-center justify-center overflow-hidden shrink-0">
                                   {owner?.photoUrl ? (
-                                    <img src={owner.photoUrl} alt={task.username} className="h-full w-full object-cover" />
+                                    <img src={owner.photoUrl} alt={task.userName} className="h-full w-full object-cover" />
                                   ) : (
-                                    <span className="font-serif text-[8px] font-bold text-brand-peach">{(owner?.name || task.username).substring(0, 1)}</span>
+                                    <span className="font-serif text-[8px] font-bold text-brand-peach">{(owner?.name || task.userName).substring(0, 1)}</span>
                                   )}
                                 </div>
                                 <span className="text-[10px] text-brand-cream/60 truncate">
-                                  {owner?.name || task.username}
+                                  {owner?.name || task.userName}
                                 </span>
                               </div>
                             </div>
