@@ -21,8 +21,8 @@ export default function DashboardView({ user, logs, onNavigateToTracker }: Dashb
     maximumFractionDigits: 2
   });
   
-  const completedLogsCount = myLogs.filter(l => l.endTime !== null).length;
-  const activeTimer = myLogs.find(l => l.endTime === null);
+  const completedLogsCount = myLogs.filter(l => l.endTime).length;
+  const activeTimer = myLogs.find(l => !l.endTime);
 
   // Calculate current calendar month logged hours for Capping
   const now = new Date();
@@ -155,12 +155,12 @@ export default function DashboardView({ user, logs, onNavigateToTracker }: Dashb
           </div>
           <div className={`h-12 w-12 rounded-xl flex items-center justify-center border ${
             activeTimer 
-              ? 'bg-rose-500/10 border-rose-500/20 text-rose-400' 
+              ? 'bg-amber-500/10 border-amber-500/20 text-amber-400' 
               : 'bg-brand-brown border-brand-peach/10 text-brand-peach/40'
           }`}>
             <span className={`relative flex h-2.5 w-2.5 ${activeTimer ? 'visible' : 'hidden'}`}>
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-75"></span>
-              <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-rose-500"></span>
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
+              <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-amber-500"></span>
             </span>
             {!activeTimer && <Award size={20} />}
           </div>
@@ -273,11 +273,11 @@ export default function DashboardView({ user, logs, onNavigateToTracker }: Dashb
                     <div className="flex justify-between items-start mb-1">
                       <span className="text-xs font-mono font-bold text-brand-peach/50">{formattedDate}</span>
                       <span className={`text-[10px] font-mono px-2 py-0.5 rounded-full font-bold border ${
-                        log.endTime === null 
-                          ? 'bg-rose-500/10 text-rose-300 border-rose-500/20'
+                        !log.endTime 
+                          ? 'bg-amber-500/10 text-amber-300 border-amber-500/20'
                           : 'bg-brand-peach/10 text-brand-peach border-brand-peach/20'
                       }`}>
-                        {log.endTime === null ? 'ACTIVE' : `${hours}h`}
+                        {!log.endTime ? 'ACTIVE' : `${hours}h`}
                       </span>
                     </div>
                     <p className="text-xs text-brand-cream/80 line-clamp-2 mt-1 leading-relaxed">

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Settings, User as UserIcon, Shield, Clock, Award, Landmark } from 'lucide-react';
+import { Settings, User as UserIcon, Shield, Clock, Award, Landmark, Upload } from 'lucide-react';
 import { User } from '../types';
 
 interface SettingsViewProps {
@@ -20,17 +20,37 @@ export default function SettingsView({ user, onUserUpdate, token }: SettingsView
   const [name, setName] = useState(user.name);
   const [photoUrl, setPhotoUrl] = useState(user.photoUrl || '');
   const [isSaving, setIsSaving] = useState(false);
+  const [uploading, setUploading] = useState(false);
   const [saveStatus, setSaveStatus] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
-  const readResponsePayload = async (response: Response) => {
-    const text = await response.text();
-    if (!text) return null;
+  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
 
-    try {
-      return JSON.parse(text);
-    } catch {
-      return text;
+    if (!file.type.startsWith('image/')) {
+      setSaveStatus({ type: 'error', message: 'Only image files are allowed.' });
+      return;
     }
+
+    if (file.size > 2 * 1024 * 1024) { // 2MB limit
+      setSaveStatus({ type: 'error', message: 'Image must be less than 2MB.' });
+      return;
+    }
+
+    setUploading(true);
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === 'string') {
+        setPhotoUrl(reader.result);
+        setSaveStatus({ type: 'success', message: 'Image loaded successfully! Click "Save Profile Settings" below to apply.' });
+      }
+      setUploading(false);
+    };
+    reader.onerror = () => {
+      setSaveStatus({ type: 'error', message: 'Failed to read file.' });
+      setUploading(false);
+    };
+    reader.readAsDataURL(file);
   };
 
   const handleSave = async (e: React.FormEvent) => {
@@ -46,9 +66,9 @@ export default function SettingsView({ user, onUserUpdate, token }: SettingsView
     try {
       const response = await fetch('/api/users/profile', {
         method: 'PATCH',
-        credentials: 'include',
         headers: {
           'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
         },
         body: JSON.stringify({
           name: name.trim(),
@@ -60,8 +80,7 @@ export default function SettingsView({ user, onUserUpdate, token }: SettingsView
         throw new Error('Failed to update profile settings.');
       }
 
-      const payload = await readResponsePayload(response);
-      const updatedUser = payload && typeof payload === 'object' && 'user' in payload ? (payload as any).user : payload;
+      const updatedUser = await response.json();
       onUserUpdate(updatedUser);
       setSaveStatus({ type: 'success', message: 'Profile settings updated successfully!' });
       setTimeout(() => setSaveStatus(null), 4000);
@@ -124,17 +143,45 @@ export default function SettingsView({ user, onUserUpdate, token }: SettingsView
               />
             </div>
 
-            <div>
-              <label className="block text-xs font-mono font-bold text-brand-peach/60 uppercase tracking-widest mb-1.5">Profile Photo URL</label>
+            <div className="space-y-4">
+              <label className="block text-xs font-mono font-bold text-brand-peach/60 uppercase tracking-widest mb-1.5">Profile Photo</label>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {/* Custom File Upload Option */}
+                <div className="p-4 bg-brand-brown/40 border border-brand-peach/10 rounded-xl flex flex-col items-center justify-center text-center space-y-2">
+                  <span className="text-xs text-brand-cream/60">Upload photo from your device</span>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={handleImageUpload}
+                    className="hidden"
+                    id="avatar-file-input"
+                  />
+                  <label
+                    htmlFor="avatar-file-input"
+                    className="px-4 py-2 bg-brand-peach/10 hover:bg-brand-peach/20 border border-brand-peach/20 text-brand-peach text-xs font-mono font-bold rounded-lg cursor-pointer transition-all flex items-center gap-1.5"
+                  >
+                    <Upload size={13} /> {uploading ? 'Uploading...' : 'Choose Image File'}
+                  </label>
+                  <span className="text-[10px] text-brand-cream/30">PNG, JPG, or JPEG (Max 2MB)</span>
+                </div>
+
+                {/* Paste URL Option */}
+                <div className="p-4 bg-brand-brown/40 border border-brand-peach/10 rounded-xl flex flex-col justify-center">
+                  <span className="text-xs text-brand-cream/60 mb-2">Or paste direct image URL</span>
               <input
                 type="text"
-                value={photoUrl}
+                value={photoUrl.startsWith('data:') ? '' : photoUrl}
                 onChange={(e) => setPhotoUrl(e.target.value)}
-                placeholder="Paste an image URL (Unsplash, Imgur, etc.)"
-                className="w-full px-4 py-3 text-sm bg-brand-brown/40 border border-brand-peach/10 rounded-xl focus:outline-none focus:ring-2 focus:ring-brand-peach/10 focus:border-brand-peach/50 text-brand-cream font-mono transition-all"
+                placeholder="https://example.com/photo.jpg"
+                className="w-full px-3 py-2 text-xs bg-brand-brown border border-brand-peach/10 rounded-lg focus:outline-none focus:ring-1 focus:ring-brand-peach focus:border-brand-peach text-brand-cream font-mono"
               />
-            </div>
-
+               {photoUrl.startsWith('data:') && (
+                 <span className="text-[9px] text-emerald-400 mt-1 font-mono">Custom photo uploaded & ready</span>
+               )}
+             </div>
+           </div>
+          </div>
+          
             {/* Avatar Presets Selection */}
             <div>
               <label className="block text-xs font-mono font-bold text-brand-peach/60 uppercase tracking-widest mb-2">Or Choose from Presets</label>

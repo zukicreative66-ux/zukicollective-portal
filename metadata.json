@@ -1,6 +1,6 @@
 {
-  "name": "Internal Team Portal",
-  "description": "A secure dashboard for developers and virtual assistants to clock in, track working hours, log tasks, and let administrators manage logs.",
+  "name": "Zuki Creatives Internal Team Portal",
+  "description": "A secure dashboard for virtual assistants to clock in, track working hours, log tasks, and let administrators manage logs.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

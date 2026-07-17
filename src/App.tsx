@@ -9,7 +9,7 @@ import { Shield, Clock, Key, AlertCircle, Mail, Lock, HelpCircle, ArrowLeft, Che
 import { logoZuki } from './utils/assets';
 
 export default function App() {
-  const [token, setToken] = useState<string | null>(null);
+  const [token, setToken] = useState<string | null>(localStorage.getItem('itp_token'));
   const [user, setUser] = useState<User | null>(null);
   const [logs, setLogs] = useState<TimeLog[]>([]);
   const [activeTab, setActiveTab] = useState('dashboard');
@@ -33,30 +33,30 @@ export default function App() {
   const [maskedEmail, setMaskedEmail] = useState('');
   const [loginSuccessMessage, setLoginSuccessMessage] = useState('');
 
-  const readResponsePayload = async (response: Response) => {
-    const text = await response.text();
-    if (!text) return null;
-
-    try {
-      return JSON.parse(text);
-    } catch {
-      return text;
-    }
-  };
-
   // 1. Initial auth check on mount
   useEffect(() => {
     const checkAuth = async () => {
+      const storedToken = localStorage.getItem('itp_token');
+      if (!storedToken) {
+        setIsCheckingAuth(false);
+        return;
+      }
+
       try {
-        const response = await fetch('/api/auth/me', { credentials: 'include' });
+        const response = await fetch('/api/auth/me', {
+          headers: {
+            'Authorization': `Bearer ${storedToken}`,
+          },
+        });
 
         if (response.ok) {
-          const payload = await readResponsePayload(response);
-          const userData = payload && typeof payload === 'object' && 'user' in payload ? (payload as any).user : payload;
+          const userData = await response.json();
           setUser(userData);
-          setToken('session');
+          setToken(storedToken);
           setActiveTab(userData.role === 'admin' ? 'admin' : 'dashboard');
         } else {
+          // Token expired or invalid
+          localStorage.removeItem('itp_token');
           setToken(null);
         }
       } catch (err) {
@@ -73,10 +73,14 @@ export default function App() {
   const fetchLogs = async () => {
     if (!token) return;
     try {
-      const response = await fetch('/api/logs', { credentials: 'include' });
+      const response = await fetch('/api/logs', {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+      });
       if (response.ok) {
-        const logsData = await readResponsePayload(response);
-        setLogs(Array.isArray(logsData) ? logsData : []);
+        const logsData = await response.json();
+        setLogs(logsData);
       }
     } catch (err) {
       console.error('Error fetching logs:', err);
@@ -106,24 +110,20 @@ export default function App() {
     try {
       const response = await fetch('/api/auth/login', {
         method: 'POST',
-        credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username, password }),
       });
 
       if (!response.ok) {
-        const payload = await readResponsePayload(response);
-        const message = payload && typeof payload === 'object' && 'error' in payload
-          ? String((payload as any).error)
-          : (typeof payload === 'string' ? payload : 'Invalid credentials');
-        throw new Error(message || 'Invalid credentials');
+        const err = await response.json();
+        throw new Error(err.error || 'Invalid credentials');
       }
 
-      const data = await readResponsePayload(response);
-      const userData = data && typeof data === 'object' && 'user' in data ? (data as any).user : data;
-      setToken('session');
-      setUser(userData);
-      setActiveTab(userData.role === 'admin' ? 'admin' : 'dashboard');
+      const data = await response.json();
+      localStorage.setItem('itp_token', data.token);
+      setToken(data.token);
+      setUser(data.user);
+      setActiveTab(data.user.role === 'admin' ? 'admin' : 'dashboard');
     } catch (err: any) {
       setLoginError(err.message || 'Server connection failed.');
     } finally {
@@ -132,13 +132,8 @@ export default function App() {
   };
 
   // 4. Logout Action
-  const handleLogout = async () => {
-    try {
-      await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' });
-    } catch (err) {
-      console.error('Logout request failed:', err);
-    }
-
+  const handleLogout = () => {
+    localStorage.removeItem('itp_token');
     setToken(null);
     setUser(null);
     setLogs([]);
@@ -168,14 +163,11 @@ export default function App() {
       });
 
       if (!response.ok) {
-        const payload = await readResponsePayload(response);
-        const message = payload && typeof payload === 'object' && 'error' in payload
-          ? String((payload as any).error)
-          : 'Failed to trigger password reset request.';
-        throw new Error(message);
+        const err = await response.json();
+        throw new Error(err.error || 'Failed to trigger password reset request.');
       }
 
-      const data = await readResponsePayload(response);
+      const data = await response.json();
       setResetUsername(data.username);
       setMaskedEmail(data.email || 'your registered Gmail');
       setResetSuccessMessage(data.message);
@@ -215,14 +207,11 @@ export default function App() {
       });
 
       if (!response.ok) {
-        const payload = await readResponsePayload(response);
-        const message = payload && typeof payload === 'object' && 'error' in payload
-          ? String((payload as any).error)
-          : 'Failed to update your password.';
-        throw new Error(message);
+        const err = await response.json();
+        throw new Error(err.error || 'Failed to update your password.');
       }
 
-      const data = await readResponsePayload(response);
+      const data = await response.json();
       setLoginSuccessMessage(data.message);
       setLoginError('');
       setResetMode('none');
@@ -259,16 +248,16 @@ export default function App() {
         <div className="w-full max-w-md z-10 space-y-6">
           {/* Logo Heading */}
           <div className="text-center flex flex-col items-center">
-            <div className="flex items-center justify-center mb-2">
+            <div className="flex items-center justify-center mb-4">
               <img 
                 src={logoZuki} 
                 alt="Zuki Logo" 
                 referrerPolicy="no-referrer"
-                className="h-[145px] w-[155px] object-contain"
+                className="h-[165px] w-[177px] object-contain"
               />
             </div>
-            <h1 className="text-[41px] font-serif font-bold tracking-tight text-brand-peach flex items-center justify-center mx-auto leading-none">Zuki Creatives</h1>
-            <p className="text-[13px] text-brand-peach/60 mt-1 font-mono uppercase tracking-widest flex items-center justify-center mx-auto">Internal Team Portal</p>
+            <h1 className="h-[65px] w-[262.594px] text-[41px] font-serif font-bold tracking-tight text-brand-peach flex items-center justify-center mx-auto">Zuki Creatives</h1>
+            <p className="h-[28px] w-[192px] text-[13px] text-brand-peach/60 mt-1.5 font-mono uppercase tracking-widest flex items-center justify-center mx-auto">Internal Team Portal</p>
           </div>
 
           {/* Form Card Container */}
@@ -309,7 +298,7 @@ export default function App() {
                         type="text"
                         required
                         disabled={isLoggingIn}
-                        placeholder="Enter your username"
+                        placeholder="e.g. username"
                         value={username}
                         onChange={(e) => setUsername(e.target.value)}
                         className="w-full pl-9 pr-4 py-2.5 bg-brand-brown/40 border border-brand-peach/10 focus:border-brand-peach/50 text-brand-cream text-sm rounded-xl focus:outline-none focus:ring-2 focus:ring-brand-peach/5 placeholder:text-brand-peach/30 transition-all font-mono"

@@ -13,7 +13,8 @@ export default function ProjectTracker({ user, token }: ProjectTrackerProps) {
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
-
+  const [draggedOverCol, setDraggedOverCol] = useState<'Todo' | 'In Progress' | 'In Review' | 'Completed' | null>(null);  
+  
   // Form states
   const [title, setTitle] = useState('');
   const [project, setProject] = useState('General');
@@ -21,12 +22,37 @@ export default function ProjectTracker({ user, token }: ProjectTrackerProps) {
   const [description, setDescription] = useState('');
   const [status, setStatus] = useState<'Todo' | 'In Progress' | 'In Review' | 'Completed'>('Todo');
 
+  // Drag & Drop handlers
+  const handleDragStart = (e: React.DragEvent, taskId: string) => {
+    e.dataTransfer.setData('text/plain', taskId);
+    e.dataTransfer.effectAllowed = 'move';
+  };
+
+  const handleDragOver = (e: React.DragEvent, colId: 'Todo' | 'In Progress' | 'In Review' | 'Completed') => {
+    e.preventDefault();
+    setDraggedOverCol(colId);
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    setDraggedOverCol(null);
+  };
+
+  const handleDrop = (e: React.DragEvent, targetColId: 'Todo' | 'In Progress' | 'In Review' | 'Completed') => {
+    e.preventDefault();
+    setDraggedOverCol(null);
+    const taskId = e.dataTransfer.getData('text/plain');
+    if (taskId) {
+      handleUpdateStatus(taskId, targetColId);
+    }
+  };
+
   const fetchTasks = async () => {
     if (!token) return;
     try {
       setIsLoading(true);
       const res = await fetch('/api/tasks', {
-        credentials: 'include'
+        headers: { 'Authorization': `Bearer ${token}` }
       });
       if (res.ok) {
         const data = await res.json();
@@ -53,9 +79,9 @@ export default function ProjectTracker({ user, token }: ProjectTrackerProps) {
     try {
       const res = await fetch('/api/tasks', {
         method: 'POST',
-        credentials: 'include',
         headers: {
           'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
         },
         body: JSON.stringify({
           title: title.trim(),
@@ -85,9 +111,9 @@ export default function ProjectTracker({ user, token }: ProjectTrackerProps) {
     try {
       const res = await fetch(`/api/tasks/${taskId}`, {
         method: 'PATCH',
-        credentials: 'include',
         headers: {
           'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
         },
         body: JSON.stringify({ status: nextStatus })
       });
@@ -105,7 +131,7 @@ export default function ProjectTracker({ user, token }: ProjectTrackerProps) {
     try {
       const res = await fetch(`/api/tasks/${taskId}`, {
         method: 'DELETE',
-        credentials: 'include'
+        headers: { 'Authorization': `Bearer ${token}` }
       });
 
       if (res.ok) {
@@ -250,10 +276,19 @@ export default function ProjectTracker({ user, token }: ProjectTrackerProps) {
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6">
         {columns.map((col) => {
           const columnTasks = tasks.filter((t) => t.status === col.id);
+          const isCurrentDragOver = draggedOverCol === col.id;
+          
           return (
             <div
               key={col.id}
-              className={`flex flex-col p-4 rounded-2xl border ${col.bgColor} ${col.borderColor} min-h-[300px]`}
+              onDragOver={(e) => handleDragOver(e, col.id)}
+              onDragLeave={handleDragLeave}
+              onDrop={(e) => handleDrop(e, col.id)}
+              className={`flex flex-col p-4 rounded-2xl border transition-all duration-300 min-h-[300px] ${col.bgColor} ${
+                isCurrentDragOver 
+                  ? 'border-brand-peach border-dashed ring-2 ring-brand-peach/10 bg-brand-peach/10 scale-[1.02]' 
+                  : col.borderColor
+              }`}
             >
               {/* Column Header */}
               <div className="flex items-center justify-between mb-4 pb-2 border-b border-brand-peach/10">
@@ -275,7 +310,9 @@ export default function ProjectTracker({ user, token }: ProjectTrackerProps) {
                   columnTasks.map((task) => (
                     <div
                       key={task.id}
-                      className="bg-brand-brown-card/95 p-4 rounded-xl border border-brand-peach/10 hover:border-brand-peach/20 shadow-md space-y-3 transition-all"
+                      draggable
+                      onDragStart={(e) => handleDragStart(e, task.id)}
+                      className="bg-brand-brown-card/95 p-4 rounded-xl border border-brand-peach/10 hover:border-brand-peach/30 shadow-md space-y-3 cursor-grab active:cursor-grabbing hover:bg-brand-brown transition-all duration-200 hover:-translate-y-0.5"
                     >
                       <div className="flex items-start justify-between gap-1">
                         <span className="px-2 py-0.5 rounded bg-brand-brown text-[9px] font-mono font-bold text-brand-peach tracking-wide flex items-center gap-1 border border-brand-peach/5">

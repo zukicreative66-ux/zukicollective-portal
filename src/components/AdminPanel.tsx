@@ -46,12 +46,403 @@ export default function AdminPanel({ user, logs, onRefreshLogs, token }: AdminPa
   const [errorMessage, setErrorMessage] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
 
+  // Export reports state
+  const [selectedExportVa, setSelectedExportVa] = useState<User | null>(null);
+  const [exportTimeframe, setExportTimeframe] = useState<'today' | 'week' | 'month' | 'all'>('month');
+
+  const exportToCSV = (va: User, timeframe: 'today' | 'week' | 'month' | 'all') => {
+    const vaLogs = logs.filter(l => l.username === va.username);
+    const now = new Date();
+    
+    // boundaries
+    const todayStr = now.toISOString().split('T')[0];
+    const startOfWeek = new Date();
+    startOfWeek.setDate(now.getDate() - now.getDay());
+    startOfWeek.setHours(0,0,0,0);
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    startOfMonth.setHours(0,0,0,0);
+
+    const filteredLogs = vaLogs.filter(log => {
+      const logStart = new Date(log.startTime);
+      if (timeframe === 'today') {
+        return log.startTime.startsWith(todayStr);
+      }
+      if (timeframe === 'week') {
+        return logStart >= startOfWeek;
+      }
+      if (timeframe === 'month') {
+        return logStart >= startOfMonth;
+      }
+      return true; // all
+    });
+
+    let totalMins = 0;
+    const rows = filteredLogs.map(log => {
+      const logStart = new Date(log.startTime);
+      let duration = log.durationMinutes || 0;
+      if (!log.endTime) {
+        duration = Math.floor((Date.now() - logStart.getTime()) / 60000);
+      }
+      totalMins += duration;
+      const hours = (duration / 60).toFixed(2);
+      const rate = va.hourlyRate || 200;
+      const payout = (duration / 60 * rate).toFixed(2);
+      
+      return [
+        `"${log.id}"`,
+        `"${log.startTime}"`,
+        `"${log.endTime || 'ACTIVE'}"`,
+        `"${duration}"`,
+        `"${hours}"`,
+        `"${va.workType || 'Standard'}"`,
+        `"${rate}"`,
+        `"${payout}"`,
+        `"${(log.description || '').replace(/"/g, '""')}"`
+      ];
+    });
+
+    const headers = ["Log ID", "Start Time", "End Time", "Duration (Minutes)", "Duration (Hours)", "Work Type", "Hourly Rate (PHP)", "Payout (PHP)", "Task Details"];
+    const csvContent = [
+      `"VA Name:","${va.name}"`,
+      `"Username:","@${va.username}"`,
+      `"Email:","${va.email}"`,
+      `"Report Timeframe:","${timeframe.toUpperCase()}"`,
+      `"Total Hours Worked:","${(totalMins / 60).toFixed(2)}"`,
+      `"Hourly Rate:","PHP ${va.hourlyRate || 200}"`,
+      `"Total Estimated Payout:","PHP ${(totalMins / 60 * (va.hourlyRate || 200)).toFixed(2)}"`,
+      "",
+      headers.join(","),
+      ...rows.map(r => r.join(","))
+    ].join("\n");
+
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.setAttribute("href", url);
+    link.setAttribute("download", `VA_Report_${va.username}_${timeframe}_${todayStr}.csv`);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    setSuccessMessage(`CSV Report for @${va.username} generated and downloaded successfully!`);
+    setTimeout(() => setSuccessMessage(''), 4000);
+  };
+
+  const exportToPDF = (va: User, timeframe: 'today' | 'week' | 'month' | 'all') => {
+    const vaLogs = logs.filter(l => l.username === va.username);
+    const now = new Date();
+    
+    // boundaries
+    const todayStr = now.toISOString().split('T')[0];
+    const startOfWeek = new Date();
+    startOfWeek.setDate(now.getDate() - now.getDay());
+    startOfWeek.setHours(0,0,0,0);
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    startOfMonth.setHours(0,0,0,0);
+
+    const filteredLogs = vaLogs.filter(log => {
+      const logStart = new Date(log.startTime);
+      if (timeframe === 'today') {
+        return log.startTime.startsWith(todayStr);
+      }
+      if (timeframe === 'week') {
+        return logStart >= startOfWeek;
+      }
+      if (timeframe === 'month') {
+        return logStart >= startOfMonth;
+      }
+      return true; // all
+    });
+
+    let totalMins = 0;
+    const logsHtml = filteredLogs.map(log => {
+      const logStart = new Date(log.startTime);
+      let duration = log.durationMinutes || 0;
+      if (!log.endTime) {
+        duration = Math.floor((Date.now() - logStart.getTime()) / 60000);
+      }
+      totalMins += duration;
+      const hours = (duration / 60).toFixed(2);
+      const rate = va.hourlyRate || 200;
+      const payout = (duration / 60 * rate).toFixed(2);
+
+      const formattedStart = new Date(log.startTime).toLocaleString('en-US', {
+        month: 'short', day: 'numeric', year: 'numeric',
+        hour: '2-digit', minute: '2-digit', hour12: true
+      });
+      const formattedEnd = log.endTime ? new Date(log.endTime).toLocaleString('en-US', {
+        month: 'short', day: 'numeric', year: 'numeric',
+        hour: '2-digit', minute: '2-digit', hour12: true
+      }) : 'ACTIVE';
+
+      return `
+        <tr style="border-bottom: 1px solid #e2e8f0; font-size: 11px;">
+          <td style="padding: 10px 8px; font-family: monospace;">${formattedStart}</td>
+          <td style="padding: 10px 8px; font-family: monospace;">${formattedEnd}</td>
+          <td style="padding: 10px 8px; text-align: center;">${hours} hrs</td>
+          <td style="padding: 10px 8px; text-align: right; font-family: monospace;">₱${rate.toFixed(2)}</td>
+          <td style="padding: 10px 8px; text-align: right; font-family: monospace; font-weight: bold;">₱${parseFloat(payout).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td>
+          <td style="padding: 10px 8px; color: #4a5568; max-width: 220px; word-break: break-all;">${(log.description || 'N/A').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</td>
+        </tr>
+      `;
+    }).join('');
+
+    const rate = va.hourlyRate || 200;
+    const totalHrs = totalMins / 60;
+    const totalPayout = totalHrs * rate;
+
+    const printWindow = window.open('', '_blank');
+    if (!printWindow) {
+      alert("Please allow popups to generate and print the PDF report.");
+      return;
+    }
+
+    printWindow.document.write(`
+      <html>
+        <head>
+          <title>Productivity Report - ${va.name}</title>
+          <style>
+            body {
+              font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+              color: #2d3748;
+              margin: 0;
+              padding: 40px;
+            }
+            .header-container {
+              display: flex;
+              justify-content: space-between;
+              align-items: flex-start;
+              border-bottom: 2px solid #e0a96d;
+              padding-bottom: 20px;
+              margin-bottom: 30px;
+            }
+            .logo-area h1 {
+              margin: 0;
+              font-size: 24px;
+              font-weight: 800;
+              color: #1a202c;
+              letter-spacing: -0.5px;
+            }
+            .logo-area p {
+              margin: 4px 0 0 0;
+              font-size: 11px;
+              color: #718096;
+              text-transform: uppercase;
+              font-weight: bold;
+              letter-spacing: 1px;
+            }
+            .report-badge {
+              background-color: #feebc8;
+              color: #c05621;
+              padding: 6px 12px;
+              border-radius: 20px;
+              font-weight: bold;
+              font-size: 11px;
+              text-transform: uppercase;
+              letter-spacing: 0.5px;
+            }
+            .details-grid {
+              display: grid;
+              grid-template-columns: 1fr 1fr;
+              gap: 20px;
+              margin-bottom: 30px;
+            }
+            .details-card {
+              background-color: #f7fafc;
+              border: 1px solid #e2e8f0;
+              border-radius: 8px;
+              padding: 15px;
+            }
+            .details-card h3 {
+              margin: 0 0 10px 0;
+              font-size: 12px;
+              text-transform: uppercase;
+              color: #718096;
+              letter-spacing: 0.5px;
+            }
+            .details-row {
+              display: flex;
+              justify-content: space-between;
+              margin-bottom: 6px;
+              font-size: 12px;
+            }
+            .details-row span:first-child {
+              color: #718096;
+            }
+            .details-row span:last-child {
+              font-weight: 600;
+            }
+            table {
+              width: 100%;
+              border-collapse: collapse;
+              margin-bottom: 30px;
+            }
+            th {
+              background-color: #f7fafc;
+              color: #4a5568;
+              font-size: 10px;
+              text-transform: uppercase;
+              font-weight: bold;
+              padding: 10px 8px;
+              text-align: left;
+              border-bottom: 2px solid #e2e8f0;
+            }
+            .summary-totals {
+              margin-left: auto;
+              width: 300px;
+              background-color: #fdf6e2;
+              border: 1px solid #fbd38d;
+              border-radius: 8px;
+              padding: 15px;
+              margin-bottom: 40px;
+            }
+            .total-row {
+              display: flex;
+              justify-content: space-between;
+              margin-bottom: 8px;
+              font-size: 13px;
+            }
+            .total-row:last-child {
+              margin-bottom: 0;
+              border-top: 1px solid #fbd38d;
+              padding-top: 8px;
+              font-size: 16px;
+              font-weight: bold;
+              color: #c05621;
+            }
+            .footer {
+              border-top: 1px solid #e2e8f0;
+              padding-top: 20px;
+              text-align: center;
+              font-size: 10px;
+              color: #a0aec0;
+            }
+            @media print {
+              body { padding: 0; }
+              .no-print { display: none; }
+            }
+          </style>
+        </head>
+        <body>
+          <div class="header-container">
+            <div class="logo-area">
+              <h1>Zuki Creatives Portal</h1>
+              <p>VA Productivity Statement & Settlement Report</p>
+            </div>
+            <div>
+              <span class="report-badge">${timeframe} report</span>
+            </div>
+          </div>
+
+          <div class="details-grid">
+            <div class="details-card">
+              <h3>Associate Details</h3>
+              <div class="details-row">
+                <span>Full Name:</span>
+                <span>${va.name}</span>
+              </div>
+              <div class="details-row">
+                <span>Username:</span>
+                <span>@${va.username}</span>
+              </div>
+              <div class="details-row">
+                <span>Email Address:</span>
+                <span>${va.email}</span>
+              </div>
+              <div class="details-row">
+                <span>Agreement Type:</span>
+                <span style="text-transform: capitalize;">${va.workType || 'part-time'}</span>
+              </div>
+            </div>
+
+            <div class="details-card">
+              <h3>Settlement & Limits</h3>
+              <div class="details-row">
+                <span>Standard Shift:</span>
+                <span>${va.scheduleStart || 'N/A'} - ${va.scheduleEnd || 'N/A'}</span>
+              </div>
+              <div class="details-row">
+                <span>Hourly Rate:</span>
+                <span>₱${rate.toFixed(2)} / hr</span>
+              </div>
+              <div class="details-row">
+                <span>Monthly Hours Capped:</span>
+                <span>50.00 hours</span>
+              </div>
+              <div class="details-row">
+                <span>Report Generated:</span>
+                <span>${new Date().toLocaleString()}</span>
+              </div>
+            </div>
+          </div>
+
+          <h3 style="font-size: 13px; text-transform: uppercase; letter-spacing: 0.5px; color: #4a5568; margin-bottom: 12px;">Detailed Time Log Ledger</h3>
+          <table>
+            <thead>
+              <tr>
+                <th style="padding: 10px 8px;">Start Time</th>
+                <th style="padding: 10px 8px;">End Time</th>
+                <th style="padding: 10px 8px; text-align: center;">Duration</th>
+                <th style="padding: 10px 8px; text-align: right;">Rate</th>
+                <th style="padding: 10px 8px; text-align: right;">Calculated Pay</th>
+                <th style="padding: 10px 8px;">Description / Assigned Tasks</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${logsHtml || '<tr><td colspan="6" style="text-align: center; padding: 20px; color: #a0aec0; font-style: italic;">No log records found for this period.</td></tr>'}
+            </tbody>
+          </table>
+
+          <div class="summary-totals">
+            <div class="total-row">
+              <span>Aggregated Duration:</span>
+              <span>${totalHrs.toFixed(2)} hrs</span>
+            </div>
+            <div class="total-row">
+              <span>Settlement Rate:</span>
+              <span>₱${rate.toFixed(2)} / hr</span>
+            </div>
+            <div class="total-row">
+              <span>Total Settlement Pay:</span>
+              <span>₱${totalPayout.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</span>
+            </div>
+          </div>
+
+          <div style="display: flex; justify-content: space-between; margin-top: 80px; margin-bottom: 40px; font-size: 12px;">
+            <div style="border-top: 1px solid #718096; width: 200px; text-align: center; padding-top: 8px;">
+              Virtual Assistant Signature
+            </div>
+            <div style="border-top: 1px solid #718096; width: 200px; text-align: center; padding-top: 8px;">
+              Authorized Administrator Sign
+            </div>
+          </div>
+
+          <div class="footer">
+            This report is a system-generated statement of hours logged under the Zuki Creatives Portal. 
+            Confidential. © ${new Date().getFullYear()} Zuki Creatives.
+          </div>
+
+          <script>
+            window.onload = function() {
+              setTimeout(function() {
+                window.print();
+              }, 500);
+            }
+          </script>
+        </body>
+      </html>
+    `);
+    printWindow.document.close();
+    setSuccessMessage(`PDF Report for @${va.username} opened in a new print window.`);
+    setTimeout(() => setSuccessMessage(''), 4000);
+  };
+
   // Fetch all users
   const fetchUsers = async () => {
     try {
       setIsLoadingUsers(true);
       const res = await fetch('/api/users', {
-        credentials: 'include'
+        headers: { 'Authorization': `Bearer ${token}` }
       });
       if (res.ok) {
         const data = await res.json();
@@ -69,7 +460,7 @@ export default function AdminPanel({ user, logs, onRefreshLogs, token }: AdminPa
     try {
       setIsLoadingTasks(true);
       const res = await fetch('/api/tasks', {
-        credentials: 'include'
+        headers: { 'Authorization': `Bearer ${token}` }
       });
       if (res.ok) {
         const data = await res.json();
@@ -100,7 +491,7 @@ export default function AdminPanel({ user, logs, onRefreshLogs, token }: AdminPa
     return sum + (hours * rate);
   }, 0);
 
-  const activeWorkers = logs.filter(l => l.endTime === null);
+  const activeWorkers = logs.filter(l => !l.endTime);
   const uniqueUsernames = Array.from(new Set(logs.map(l => l.username)));
 
   // Filter logs list
@@ -109,7 +500,7 @@ export default function AdminPanel({ user, logs, onRefreshLogs, token }: AdminPa
     if (filterType !== 'all') {
       if (filterType === 'manual' && !log.isManual) return false;
       if (filterType === 'timer' && log.isManual) return false;
-      if (filterType === 'active' && log.endTime !== null) return false;
+      if (filterType === 'active' && log.endTime) return false;
     }
     return true;
   });
@@ -121,7 +512,7 @@ export default function AdminPanel({ user, logs, onRefreshLogs, token }: AdminPa
       const rows = filteredLogs.map(log => {
         const date = new Date(log.startTime).toLocaleDateString();
         const roleStr = log.role.toUpperCase();
-        const typeStr = log.endTime === null ? 'ACTIVE' : (log.isManual ? 'MANUAL' : 'TIMER');
+        const typeStr = !log.endTime ? 'ACTIVE' : (log.isManual ? 'MANUAL' : 'TIMER');
         const hrs = (log.durationMinutes / 60).toFixed(2);
         
         const matchedUser = usersList.find(u => u.username === log.username);
@@ -181,9 +572,9 @@ export default function AdminPanel({ user, logs, onRefreshLogs, token }: AdminPa
     try {
       const response = await fetch(`/api/logs/${logId}`, {
         method: 'PATCH',
-        credentials: 'include',
         headers: {
           'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
         },
         body: JSON.stringify({
           description: editDescription,
@@ -210,7 +601,7 @@ export default function AdminPanel({ user, logs, onRefreshLogs, token }: AdminPa
     try {
       const response = await fetch(`/api/logs/${logId}`, {
         method: 'DELETE',
-        credentials: 'include',
+        headers: { 'Authorization': `Bearer ${token}` },
       });
       if (!response.ok) {
         throw new Error('Failed to delete log');
@@ -244,9 +635,9 @@ export default function AdminPanel({ user, logs, onRefreshLogs, token }: AdminPa
     try {
       const response = await fetch(`/api/users/${userId}`, {
         method: 'PATCH',
-        credentials: 'include',
         headers: {
           'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
         },
         body: JSON.stringify({
           name: editUserName.trim(),
@@ -408,14 +799,6 @@ export default function AdminPanel({ user, logs, onRefreshLogs, token }: AdminPa
               </div>
 
               <div className="flex flex-wrap gap-3">
-                <button
-                  type="button"
-                  onClick={handleExportCSV}
-                  className="inline-flex items-center gap-2 px-3 py-2 rounded-xl border border-brand-peach/20 bg-brand-peach/10 text-brand-peach text-xs font-semibold hover:bg-brand-peach/20 transition-all cursor-pointer"
-                >
-                  <FileDown size={14} /> Export VA Logs CSV
-                </button>
-
                 <div>
                   <label className="block text-[10px] font-mono font-bold text-brand-peach/60 uppercase tracking-widest mb-1.5">Filter Member</label>
                   <select
@@ -510,9 +893,9 @@ export default function AdminPanel({ user, logs, onRefreshLogs, token }: AdminPa
                                 />
                                 <span className="text-xs font-mono text-brand-peach/50">min</span>
                               </div>
-                            ) : log.endTime === null ? (
-                              <span className="inline-flex items-center text-rose-400 font-medium">
-                                <span className="h-1.5 w-1.5 rounded-full bg-rose-500 animate-pulse mr-1.5"></span>
+                            ) : !log.endTime ? (
+                              <span className="inline-flex items-center text-amber-400 font-medium">
+                                <span className="h-1.5 w-1.5 rounded-full bg-amber-500 animate-pulse mr-1.5"></span>
                                 Active
                               </span>
                             ) : (
@@ -524,13 +907,13 @@ export default function AdminPanel({ user, logs, onRefreshLogs, token }: AdminPa
 
                           <td className="px-6 py-4">
                             <span className={`px-2 py-0.5 rounded-full font-mono text-[9px] font-bold border ${
-                              log.endTime === null 
-                                ? 'bg-rose-500/10 text-rose-300 border-rose-500/20' 
+                              !log.endTime 
+                                ? 'bg-amber-500/10 text-amber-300 border-amber-500/20' 
                                 : log.isManual 
                                 ? 'bg-amber-500/15 text-amber-300 border-amber-500/20' 
                                 : 'bg-brand-peach/10 text-brand-peach border border-brand-peach/20'
                             }`}>
-                              {log.endTime === null ? 'ACTIVE' : (log.isManual ? 'MANUAL' : 'TIMER')}
+                              {!log.endTime ? 'ACTIVE' : (log.isManual ? 'MANUAL' : 'TIMER')}
                             </span>
                           </td>
 
@@ -598,11 +981,154 @@ export default function AdminPanel({ user, logs, onRefreshLogs, token }: AdminPa
       )}
 
       {adminTab === 'users' && (
-        <div className="bg-brand-brown-card p-6 rounded-3xl border border-brand-peach/10 shadow-lg space-y-6">
-          <div>
-            <h2 className="font-serif font-bold text-brand-peach text-lg tracking-wide">VA Profiles & Schedule Configurations</h2>
-            <p className="text-xs text-brand-cream/60">Manage each VA's shift parameters, hourly rates, work types, and monthly hour caps.</p>
+        <div className="space-y-6">
+          {/* VA Shift Hours & Earnings Summary Table/Record */}
+          <div className="bg-brand-brown-card p-6 rounded-3xl border border-brand-peach/10 shadow-lg space-y-4">
+            <div>
+              <h2 className="font-serif font-bold text-brand-peach text-lg tracking-wide">VA Hours & Earnings Report Ledger</h2>
+              <p className="text-xs text-brand-cream/60">Real-time consolidated statement of hours logged and liabilities calculated at each VA's designated hourly rate (Standard rate: ₱200/hr).</p>
+            </div>
+
+            {isLoadingUsers ? (
+              <div className="p-4 text-center text-brand-peach/50 text-xs">Generating report ledger...</div>
+            ) : (
+              <div className="overflow-x-auto rounded-xl border border-brand-peach/10 bg-brand-brown/20">
+                <table className="w-full border-collapse text-left text-xs text-brand-cream/80">
+                  <thead className="bg-brand-brown/60 font-mono font-bold uppercase text-brand-peach/70 border-b border-brand-peach/10">
+                    <tr>
+                      <th className="px-4 py-3">Virtual Assistant</th>
+                      <th className="px-4 py-3">Today's Hours</th>
+                      <th className="px-4 py-3">Today's Pay</th>
+                      <th className="px-4 py-3">Weekly Hours</th>
+                      <th className="px-4 py-3">Weekly Pay</th>
+                      <th className="px-4 py-3">Monthly Hours</th>
+                      <th className="px-4 py-3">Monthly Pay</th>
+                      <th className="px-4 py-3">Status</th>
+                      <th className="px-4 py-3 text-right">Reports</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-brand-peach/10 font-mono">
+                    {(() => {
+                      const vaUsers = usersList.filter(u => u.role !== 'admin');
+                      if (vaUsers.length === 0) {
+                        return (
+                          <tr>
+                            <td colSpan={9} className="px-4 py-6 text-center text-brand-cream/30 italic">No Virtual Assistant records configured.</td>
+                          </tr>
+                        );
+                      }
+
+                      return vaUsers.map((va) => {
+                        const vaLogs = logs.filter(l => l.username === va.username);
+                        const now = new Date();
+                        
+                        // Today filter boundary
+                        const todayStr = now.toISOString().split('T')[0];
+
+                        // Week boundary (Sunday of current week)
+                        const startOfWeek = new Date();
+                        startOfWeek.setDate(now.getDate() - now.getDay());
+                        startOfWeek.setHours(0, 0, 0, 0);
+
+                        // Month boundary (1st of current month)
+                        const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+                        startOfMonth.setHours(0, 0, 0, 0);
+
+                        let minsToday = 0;
+                        let minsWeek = 0;
+                        let minsMonth = 0;
+
+                        vaLogs.forEach(log => {
+                          const logStart = new Date(log.startTime);
+                          let duration = log.durationMinutes || 0;
+                          if (!log.endTime) {
+                            duration = Math.floor((Date.now() - logStart.getTime()) / 60000);
+                          }
+
+                          // Today
+                          if (log.startTime.startsWith(todayStr)) {
+                            minsToday += duration;
+                          }
+                          // This Week
+                          if (logStart >= startOfWeek) {
+                            minsWeek += duration;
+                          }
+                          // This Month
+                          if (logStart >= startOfMonth) {
+                            minsMonth += duration;
+                          }
+                        });
+
+                        const hrsToday = minsToday / 60;
+                        const hrsWeek = minsWeek / 60;
+                        const hrsMonth = minsMonth / 60;
+
+                        const rate = va.hourlyRate || 200;
+                        const payToday = hrsToday * rate;
+                        const payWeek = hrsWeek * rate;
+                        const payMonth = hrsMonth * rate;
+
+                        const isClockedIn = logs.some(l => l.username === va.username && !l.endTime);
+
+                        return (
+                          <tr key={va.id} className="hover:bg-brand-brown/40 transition-colors">
+                            <td className="px-4 py-3 font-sans font-bold text-brand-cream flex items-center gap-2">
+                              <div className="h-6 w-6 rounded-full bg-brand-peach/10 border border-brand-peach/20 overflow-hidden flex items-center justify-center text-[10px] italic">
+                                {va.photoUrl ? (
+                                  <img src={va.photoUrl} alt={va.name} className="h-full w-full object-cover" />
+                                ) : (
+                                  va.name.substring(0, 1)
+                                )}
+                              </div>
+                              <div>
+                                <span className="block leading-tight text-xs">{va.name}</span>
+                                <span className="text-[10px] font-mono text-brand-peach/60 leading-none">@{va.username}</span>
+                              </div>
+                            </td>
+                            <td className="px-4 py-3 font-semibold text-brand-cream">{hrsToday.toFixed(1)} hrs</td>
+                            <td className="px-4 py-3 text-brand-peach font-bold">₱{payToday.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                            <td className="px-4 py-3 text-brand-cream/80">{hrsWeek.toFixed(1)} hrs</td>
+                            <td className="px-4 py-3 text-brand-peach">₱{payWeek.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                            <td className="px-4 py-3 text-brand-cream/80">{hrsMonth.toFixed(1)} hrs / {va.monthlyHoursCap}h</td>
+                            <td className="px-4 py-3 text-brand-peach">₱{payMonth.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                            <td className="px-4 py-3">
+                              {isClockedIn ? (
+                                <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20 text-[9px] font-bold uppercase tracking-wider animate-pulse">
+                                  ● Working
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-brand-brown text-brand-cream/40 border border-brand-peach/5 text-[9px] font-bold uppercase tracking-wider">
+                                  Offline
+                                </span>
+                              )}
+                            </td>
+                            <td className="px-4 py-3 text-right">
+                              <button
+                                onClick={() => {
+                                  setSelectedExportVa(va);
+                                  setExportTimeframe('month'); // default to month
+                                }}
+                                className="inline-flex items-center gap-1 px-2 py-1 bg-brand-peach/15 text-brand-peach hover:bg-brand-peach hover:text-brand-brown border border-brand-peach/20 hover:border-transparent text-[10px] font-mono font-bold rounded-lg transition-all cursor-pointer shadow-sm"
+                                title="Export PDF or CSV Productivity Statement"
+                              >
+                                <FileDown size={11} /> Export
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      });
+                    })()}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
+
+          <div className="bg-brand-brown-card p-6 rounded-3xl border border-brand-peach/10 shadow-lg space-y-6">
+            <div>
+              <h2 className="font-serif font-bold text-brand-peach text-lg tracking-wide">VA Profiles & Schedule Configurations</h2>
+              <p className="text-xs text-brand-cream/60">Manage each VA's shift parameters, hourly rates, work types, and monthly hour caps.</p>
+            </div>
 
           {isLoadingUsers ? (
             <div className="p-8 text-center text-brand-peach/50 text-xs">Loading employee registry...</div>
@@ -760,7 +1286,8 @@ export default function AdminPanel({ user, logs, onRefreshLogs, token }: AdminPa
             </div>
           )}
         </div>
-      )}
+      </div>
+    )}
 
       {adminTab === 'tasks' && (
         <div className="bg-brand-brown-card p-6 rounded-3xl border border-brand-peach/10 shadow-lg space-y-6">
@@ -861,6 +1388,94 @@ export default function AdminPanel({ user, logs, onRefreshLogs, token }: AdminPa
               })}
             </div>
           )}
+        </div>
+      )}
+
+      {/* EXPORT PORTAL MODAL */}
+      {selectedExportVa && (
+        <div className="fixed inset-0 bg-brand-brown/80 backdrop-blur-md flex items-center justify-center z-50 p-4 animate-fade-in" id="export-modal">
+          <div className="bg-brand-brown-card border border-brand-peach/20 max-w-md w-full rounded-3xl p-6 shadow-2xl space-y-5 relative">
+            {/* Modal Header */}
+            <div className="flex items-start justify-between">
+              <div>
+                <h3 className="font-serif font-bold text-brand-peach text-lg tracking-wide">Generate Productivity Report</h3>
+                <p className="text-xs text-brand-cream/60">Export a pristine settlement statement and work ledger.</p>
+              </div>
+              <button 
+                onClick={() => setSelectedExportVa(null)}
+                className="text-brand-peach/40 hover:text-brand-peach p-1 hover:bg-brand-peach/10 rounded-lg transition-colors cursor-pointer"
+                id="close-export-modal"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* Associate Card */}
+            <div className="p-3 bg-brand-brown/40 border border-brand-peach/10 rounded-2xl flex items-center gap-3">
+              <div className="h-10 w-10 rounded-full bg-brand-peach/10 border border-brand-peach/20 overflow-hidden flex items-center justify-center font-bold font-serif italic text-sm">
+                {selectedExportVa.photoUrl ? (
+                  <img src={selectedExportVa.photoUrl} alt={selectedExportVa.name} className="h-full w-full object-cover" />
+                ) : (
+                  selectedExportVa.name.substring(0, 1)
+                )}
+              </div>
+              <div className="flex-1 min-w-0">
+                <h4 className="font-bold text-brand-cream text-sm leading-tight truncate">{selectedExportVa.name}</h4>
+                <p className="text-xs text-brand-cream/40 font-mono">@{selectedExportVa.username} • {selectedExportVa.email}</p>
+                <p className="text-[10px] text-brand-peach/80 font-mono mt-0.5">Rate: ₱{(selectedExportVa.hourlyRate || 200).toFixed(2)}/hr • Limit: {selectedExportVa.monthlyHoursCap || 50}h/mo</p>
+              </div>
+            </div>
+
+            {/* Timeframe selector */}
+            <div className="space-y-2">
+              <label className="block text-[10px] font-mono font-bold text-brand-peach/60 uppercase tracking-widest">Select Report Timeframe</label>
+              <div className="grid grid-cols-2 gap-2">
+                {[
+                  { id: 'today', label: 'Today', desc: "Today's log entries" },
+                  { id: 'week', label: 'This Week', desc: 'Current calendar week' },
+                  { id: 'month', label: 'This Month', desc: 'Current calendar month' },
+                  { id: 'all', label: 'All History', desc: 'All logs since seed' }
+                ].map((item) => (
+                  <button
+                    key={item.id}
+                    onClick={() => setExportTimeframe(item.id as any)}
+                    className={`p-3 rounded-xl border text-left transition-all cursor-pointer flex flex-col justify-between ${
+                      exportTimeframe === item.id 
+                        ? 'bg-brand-peach/15 border-brand-peach text-brand-peach shadow-inner' 
+                        : 'bg-brand-brown/20 border-brand-peach/10 hover:border-brand-peach/30 text-brand-cream/80'
+                    }`}
+                  >
+                    <span className="text-xs font-bold font-mono">{item.label}</span>
+                    <span className="text-[9px] opacity-60 mt-0.5 leading-snug">{item.desc}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Actions */}
+            <div className="pt-2 border-t border-brand-peach/10 flex flex-col sm:flex-row gap-2">
+              <button
+                onClick={() => {
+                  exportToPDF(selectedExportVa, exportTimeframe);
+                  setSelectedExportVa(null);
+                }}
+                className="flex-1 py-2.5 px-4 bg-brand-peach text-brand-brown hover:bg-brand-peach/90 font-mono font-bold text-xs rounded-xl transition-all shadow-md cursor-pointer flex items-center justify-center gap-1.5"
+                id="export-pdf-btn"
+              >
+                <FileDown size={14} /> Export PDF Report
+              </button>
+              <button
+                onClick={() => {
+                  exportToCSV(selectedExportVa, exportTimeframe);
+                  setSelectedExportVa(null);
+                }}
+                className="flex-1 py-2.5 px-4 bg-brand-brown hover:bg-brand-brown/70 border border-brand-peach/20 hover:border-brand-peach/40 text-brand-cream font-mono font-bold text-xs rounded-xl transition-all cursor-pointer flex items-center justify-center gap-1.5"
+                id="export-csv-btn"
+              >
+                <FileDown size={14} /> Export CSV Ledger
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

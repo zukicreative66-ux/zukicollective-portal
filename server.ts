@@ -4,13 +4,11 @@ import fs from "fs";
 import crypto from "crypto";
 import nodemailer from "nodemailer";
 import { createClient } from "@supabase/supabase-js";
-import { loadPortalEnvironment } from "./auth-env";
 
 const app = express();
-const PORT = Number(process.env.PORT || 3000);
+const PORT = 3000;
 
 const isVercel = !!process.env.VERCEL;
-const portalEnv = loadPortalEnvironment();
 const ORIGINAL_DB_FILE = path.join(process.cwd(), "db_data.json");
 const DB_FILE = isVercel 
   ? path.join("/tmp", "db_data.json") 
@@ -30,57 +28,9 @@ if (useSupabase) {
 }
 
 const resetTokens = new Map<string, { email: string; otp: string; expiresAt: number; attempts: number }>();
-const sessionStore = new Map<string, { userId: string; expiresAt: number }>();
 
 function hashPassword(password: string): string {
-  const salt = crypto.randomBytes(16).toString("hex");
-  const derivedKey = crypto.scryptSync(password, salt, 64).toString("hex");
-  return `scrypt$${salt}$${derivedKey}`;
-}
-
-function verifyPassword(password: string, storedHash?: string): boolean {
-  if (!storedHash) return false;
-
-  if (storedHash.startsWith("scrypt$")) {
-    const [, salt, expectedHash] = storedHash.split("$");
-    if (!salt || !expectedHash) return false;
-
-    const derivedKey = crypto.scryptSync(password, salt, 64).toString("hex");
-    if (derivedKey.length !== expectedHash.length) return false;
-    return crypto.timingSafeEqual(Buffer.from(derivedKey, "hex"), Buffer.from(expectedHash, "hex"));
-  }
-
-  return crypto.createHash("sha256").update(password).digest("hex") === storedHash;
-}
-
-function getSessionCookieOptions() {
-  const isSecure = process.env.NODE_ENV === "production" || isVercel;
-  return {
-    httpOnly: true,
-    secure: isSecure,
-    sameSite: "lax" as const,
-    path: "/",
-    maxAge: 60 * 60 * 24 * 7,
-  };
-}
-
-function setSessionCookie(res: express.Response, token: string) {
-  res.cookie("portal_session", token, getSessionCookieOptions());
-}
-
-function clearSessionCookie(res: express.Response) {
-  res.clearCookie("portal_session", { path: "/" });
-}
-
-function readSessionToken(req: express.Request): string | null {
-  const authHeader = req.headers.authorization;
-  if (authHeader && authHeader.startsWith("Bearer ")) {
-    return authHeader.split(" ")[1];
-  }
-
-  const cookieHeader = req.headers.cookie || "";
-  const match = cookieHeader.match(/(?:^|;\s*)portal_session=([^;]+)/);
-  return match ? decodeURIComponent(match[1]) : null;
+  return crypto.createHash("sha256").update(password).digest("hex");
 }
 
 async function sendResetEmail(email: string, username: string, otp: string): Promise<boolean> {
@@ -186,15 +136,15 @@ interface DBStructure {
 }
 
 function getSeededUsers(): DBUser[] {
-  const adminUsername = portalEnv.devUserName;
-  const adminEmail = portalEnv.devUserEmail;
-  const adminPassword = portalEnv.devUserPassword;
-  const adminName = portalEnv.devUserFullName;
+  const adminUsername = process.env.DEV_USER_NAME || "admin";
+  const adminEmail = process.env.DEV_USER_EMAIL || "admin@example.com";
+  const adminPassword = process.env.DEV_USER_PASSWORD || "admin123";
+  const adminName = process.env.DEV_USER_FULLNAME || "Admin User";
   
-  const izavaUsername = portalEnv.izaVaUsername;
-  const izavaEmail = portalEnv.izaVaEmail;
-  const izavaName = portalEnv.izaVaName;
-  const izavaPassword = portalEnv.izaVaPassword;
+  const izavaUsername = process.env.IZA_VA_USERNAME || "va_member";
+  const izavaEmail = process.env.IZA_VA_EMAIL || "va_member@example.com";
+  const izavaName = process.env.IZA_VA_NAME || "VA Member";
+  const izavaPassword = process.env.IZA_VA_PASSWORD || "izava123";
 
   return [
     {
@@ -223,14 +173,28 @@ function getSeededUsers(): DBUser[] {
       scheduleStart: "09:00",
       scheduleEnd: "17:00",
       photoUrl: "",
-      monthlyHoursCap: 160,
+      monthlyHoursCap: 50, // Capped at 50 hours as per requirements
+    },
+    {
+      id: "user-va2",
+      username: "va_member2",
+      email: "va_member2@example.com",
+      passwordHash: hashPassword("va_member123"), // Seeded VA 2 with credentials
+      name: "VA Member Two",
+      role: "va",
+      hourlyRate: 200, // PHP 200 per hour standard
+      workType: "part-time",
+      scheduleStart: "08:00",
+      scheduleEnd: "16:00",
+      photoUrl: "",
+      monthlyHoursCap: 50, // Capped at 50 hours as per requirements
     }
   ];
 }
 
 function getDefaultDB(): DBStructure {
-  const adminUsername = portalEnv.devUserName;
-  const adminName = portalEnv.devUserFullName;
+  const adminUsername = process.env.DEV_USER_NAME || "admin";
+  const adminName = process.env.DEV_USER_FULLNAME || "Admin User";
 
   return {
     users: getSeededUsers(),
@@ -342,14 +306,14 @@ function readDB(): DBStructure {
     if (!db.tasks) db.tasks = [];
     if (!db.users) db.users = [];
 
-    // Filter local db users to ONLY contain admin and iza_va
-    const adminUsername = (process.env.DEV_USER_NAME || "admin").toLowerCase().trim();
-    const izavaUsername = (process.env.IZA_VA_USERNAME || "va_member").toLowerCase().trim();
+    // Filter local db users to ONLY contain those defined in getSeededUsers()
+    const seededUsernames = getSeededUsers().map(u => u.username.toLowerCase().trim());
     db.users = db.users.filter((u: any) => {
       const uName = (u.username || "").toLowerCase().trim();
-      return uName === adminUsername || uName === izavaUsername;
+      return seededUsernames.includes(uName);
     });
 
+    const adminUsername = (process.env.DEV_USER_NAME || "admin").toLowerCase().trim();
     let migrated = false;
     db.users = db.users.map((u: any) => {
       let pwd = u.passwordHash;
@@ -629,6 +593,12 @@ const dbAdapter = {
     const cleanUsername = sanitizePostgrestString(username).toLowerCase().trim();
     if (!cleanUsername) return null;
 
+    const adminUsername = (process.env.DEV_USER_NAME || "admin").toLowerCase().trim();
+    const izavaUsername = (process.env.IZA_VA_USERNAME || "va_member").toLowerCase().trim();
+    if (cleanUsername !== adminUsername && cleanUsername !== izavaUsername) {
+      return null;
+    }
+
     if (supabase) {
       const { data, error } = await supabase
         .from("users")
@@ -641,7 +611,6 @@ const dbAdapter = {
         console.error("[Supabase Error] getUserByUsername fallback:", error);
       }
     }
-
     const db = readDB();
     return db.users.find(u => u.username.toLowerCase().trim() === cleanUsername) || null;
   },
@@ -655,17 +624,42 @@ const dbAdapter = {
         .eq("id", id)
         .maybeSingle();
       if (!error && data) user = mapUserFromDb(data);
-    } else {
+    }
+    if (!user) {
       const db = readDB();
       user = db.users.find(u => u.id === id) || null;
     }
 
-    return user;
+     if (user) {
+      const adminUsername = (process.env.DEV_USER_NAME || "admin").toLowerCase().trim();
+      const izavaUsername = (process.env.IZA_VA_USERNAME || "va_member").toLowerCase().trim();
+      const uname = (user.username || "").toLowerCase().trim();
+      if (uname === adminUsername || uname === izavaUsername) {
+        return user;
+      }
+    }
+    return null;
   },
 
   async getUserByEmailOrUsername(searchStr: string): Promise<DBUser | null> {
     const cleanSearch = sanitizePostgrestString(searchStr.toLowerCase()).trim();
     if (!cleanSearch) return null;
+
+    const adminUsername = (process.env.DEV_USER_NAME || "admin").toLowerCase().trim();
+    const adminEmail = (process.env.DEV_USER_EMAIL || "admin@example.com").toLowerCase().trim();
+    const izavaUsername = (process.env.IZA_VA_USERNAME || "va_member").toLowerCase().trim();
+    const izavaEmail = (process.env.IZA_VA_EMAIL || "va_member@example.com").toLowerCase().trim();
+
+    // Check if the search matches allowed users
+    const isSearchAllowed = 
+      cleanSearch === adminUsername || 
+      cleanSearch === adminEmail || 
+      cleanSearch === izavaUsername || 
+      cleanSearch === izavaEmail;
+
+    if (!isSearchAllowed) {
+      return null;
+    }
 
     if (supabase) {
       const { data, error } = await supabase
@@ -675,12 +669,12 @@ const dbAdapter = {
         .maybeSingle();
       if (!error && data) return mapUserFromDb(data);
     }
-
     const db = readDB();
     return db.users.find(u => u.username.toLowerCase().trim() === cleanSearch || u.email.toLowerCase().trim() === cleanSearch) || null;
   },
 
   async updateUser(id: string, updates: Partial<DBUser>): Promise<DBUser> {
+    let updatedUser: DBUser | null = null;
     if (supabase) {
       const dbUpdates = await mapUserToDb(updates);
       const { data, error } = await supabase
@@ -690,29 +684,38 @@ const dbAdapter = {
         .select()
         .maybeSingle();
       if (!error && data) {
-        const mappedUser = mapUserFromDb(data);
+        updatedUser = mapUserFromDb(data);
         if (updates.name) {
           const logCasing = await detectLogCasing();
           const updateObj = { name: updates.name };
           const logUserIdKey = logCasing === "snake" ? "user_id" : (logCasing === "lowercase" ? "userid" : "userId");
           await supabase.from("logs").update(updateObj).eq(logUserIdKey, id);
         }
-        return mappedUser;
+      } else {
+        console.error("[Supabase Error] updateUser fallback:", error);
       }
-      console.error("[Supabase Error] updateUser fallback:", error);
     }
     const db = readDB();
-    const idx = db.users.findIndex(u => u.id === id);
+    let idx = db.users.findIndex(u => u.id === id);
+    if (idx === -1) {
+      const resolvedUser = await dbAdapter.getUserById(id);
+      if (resolvedUser) {
+        idx = db.users.findIndex(u => u.username.toLowerCase().trim() === resolvedUser.username.toLowerCase().trim());
+      }
+    }
     if (idx !== -1) {
       db.users[idx] = { ...db.users[idx], ...updates };
       if (updates.name) {
         db.logs.forEach(log => {
-          if (log.userId === id) log.name = updates.name!;
+          if (log.userId === id || (idx !== -1 && log.userId === db.users[idx].id)) {
+            log.name = updates.name!;
+          }
         });
       }
       writeDB(db);
-      return db.users[idx];
+      return updatedUser || db.users[idx];
     }
+    if (updatedUser) return updatedUser;
     throw new Error("User not found");
   },
 
@@ -737,6 +740,7 @@ const dbAdapter = {
   },
 
   async createTask(task: DBTask): Promise<DBTask> {
+    let createdTask: DBTask | null = null;
     if (supabase) {
       const dbTask = await mapTaskToDb(task);
       const { data, error } = await supabase
@@ -744,16 +748,18 @@ const dbAdapter = {
         .insert(dbTask)
         .select()
         .maybeSingle();
-      if (!error && data) return mapTaskFromDb(data);
-      console.error("[Supabase Error] createTask fallback:", error);
+      if (!error && data) createdTask = mapTaskFromDb(data);
+      else console.error("[Supabase Error] createTask fallback:", error);
     }
     const db = readDB();
-    db.tasks.unshift(task);
+    const taskToSave = createdTask || task;
+    db.tasks.unshift(taskToSave);
     writeDB(db);
-    return task;
+    return taskToSave;
   },
 
   async updateTask(id: string, updates: Partial<DBTask>): Promise<DBTask> {
+    let updatedTask: DBTask | null = null;
     if (supabase) {
       const dbUpdates = await mapTaskToDb(updates);
       const { data, error } = await supabase
@@ -762,24 +768,26 @@ const dbAdapter = {
         .eq("id", id)
         .select()
         .maybeSingle();
-      if (!error && data) return mapTaskFromDb(data);
-      console.error("[Supabase Error] updateTask fallback:", error);
+      if (!error && data) updatedTask = mapTaskFromDb(data);
+      else console.error("[Supabase Error] updateTask fallback:", error);
     }
     const db = readDB();
     const idx = db.tasks.findIndex(t => t.id === id);
     if (idx !== -1) {
       db.tasks[idx] = { ...db.tasks[idx], ...updates };
       writeDB(db);
-      return db.tasks[idx];
+      return updatedTask || db.tasks[idx];
     }
+    if (updatedTask) return updatedTask;
     throw new Error("Task not found");
   },
 
   async deleteTask(id: string): Promise<boolean> {
+    let deletedFromSupabase = false;
     if (supabase) {
       const { error } = await supabase.from("tasks").delete().eq("id", id);
-      if (!error) return true;
-      console.error("[Supabase Error] deleteTask fallback:", error);
+      if (!error) deletedFromSupabase = true;
+      else console.error("[Supabase Error] deleteTask fallback:", error);
     }
     const db = readDB();
     const idx = db.tasks.findIndex(t => t.id === id);
@@ -788,7 +796,7 @@ const dbAdapter = {
       writeDB(db);
       return true;
     }
-    return false;
+    return deletedFromSupabase;
   },
 
   async getLogs(userId?: string): Promise<DBLog[]> {
@@ -826,10 +834,11 @@ const dbAdapter = {
       if (error) console.error("[Supabase Error] getActiveLog fallback:", error);
     }
     const db = readDB();
-    return db.logs.find(l => l.userId === userId && l.endTime === null) || null;
+    return db.logs.find(l => l.userId === userId && !l.endTime) || null;
   },
 
   async createLog(log: DBLog): Promise<DBLog> {
+    let createdLog: DBLog | null = null;
     if (supabase) {
       const dbLog = await mapLogToDb(log);
       const { data, error } = await supabase
@@ -837,16 +846,18 @@ const dbAdapter = {
         .insert(dbLog)
         .select()
         .maybeSingle();
-      if (!error && data) return mapLogFromDb(data);
-      console.error("[Supabase Error] createLog fallback:", error);
+      if (!error && data) createdLog = mapLogFromDb(data);
+      else console.error("[Supabase Error] createLog fallback:", error);
     }
     const db = readDB();
-    db.logs.unshift(log);
+    const logToSave = createdLog || log;
+    db.logs.unshift(logToSave);
     writeDB(db);
-    return log;
+    return logToSave;
   },
 
   async updateLog(id: string, updates: Partial<DBLog>): Promise<DBLog> {
+    let updatedLog: DBLog | null = null;
     if (supabase) {
       const dbUpdates = await mapLogToDb(updates);
       const { data, error } = await supabase
@@ -855,24 +866,26 @@ const dbAdapter = {
         .eq("id", id)
         .select()
         .maybeSingle();
-      if (!error && data) return mapLogFromDb(data);
-      console.error("[Supabase Error] updateLog fallback:", error);
+      if (!error && data) updatedLog = mapLogFromDb(data);
+      else console.error("[Supabase Error] updateLog fallback:", error);
     }
     const db = readDB();
     const idx = db.logs.findIndex(l => l.id === id);
     if (idx !== -1) {
       db.logs[idx] = { ...db.logs[idx], ...updates };
       writeDB(db);
-      return db.logs[idx];
+      return updatedLog || db.logs[idx];
     }
+    if (updatedLog) return updatedLog;
     throw new Error("Log not found");
   },
 
   async deleteLog(id: string): Promise<boolean> {
+    let deletedFromSupabase = false;
     if (supabase) {
       const { error } = await supabase.from("logs").delete().eq("id", id);
-      if (!error) return true;
-      console.error("[Supabase Error] deleteLog fallback:", error);
+      if (!error) deletedFromSupabase = true;
+      else console.error("[Supabase Error] deleteLog fallback:", error);
     }
     const db = readDB();
     const idx = db.logs.findIndex(l => l.id === id);
@@ -881,29 +894,11 @@ const dbAdapter = {
       writeDB(db);
       return true;
     }
-    return false;
+    return deletedFromSupabase;
   }
 };
 
 app.use(express.json());
-
-app.get(["/db_data.json", "/metadata.json", "/package.json", "/.env"], (_req, res) => {
-  res.status(404).json({ error: "Not found" });
-});
-
-// Normalize API paths for both local Express and Vercel serverless routing.
-// Vercel rewrites /api/* requests through the serverless entrypoint, so we
-// also accept root-level API-like paths such as /auth/login and /logs.
-app.use((req, res, next) => {
-  const path = req.path || "";
-  const isApiLikeRoute = path.startsWith("/auth/") || path.startsWith("/users") || path.startsWith("/tasks") || path.startsWith("/logs");
-
-  if (isApiLikeRoute && !path.startsWith("/api")) {
-    req.url = `/api${req.url}`;
-  }
-
-  next();
-});
 
 // 1. Security baseline headers middleware
 app.use((req, res, next) => {
@@ -960,21 +955,26 @@ app.use("/api", ipRateLimiter(60000, 150, "Too many API requests from this IP. P
 const loginAttempts = new Map<string, { count: number; lockUntil: number }>();
 
 // Token validation middleware
-async function getUserFromToken(authHeader?: string, req?: express.Request) {
-  const token = req ? readSessionToken(req) : (authHeader && authHeader.startsWith("Bearer ") ? authHeader.split(" ")[1] : null);
-  if (!token) return null;
-
+async function getUserFromToken(authHeader?: string) {
+  if (!authHeader || !authHeader.startsWith("Bearer ")) return null;
+  const token = authHeader.split(" ")[1];
   try {
     if (useSupabase && supabase) {
       const { data: { user: authUser }, error } = await supabase.auth.getUser(token);
       if (error || !authUser) {
-        return null;
+        // Fallback to legacy base64 token if Supabase verification fails
+        try {
+          const username = Buffer.from(token, "base64").toString("utf8");
+          return await dbAdapter.getUserByUsername(username);
+        } catch (e) {
+          return null;
+        }
       }
       return await dbAdapter.getUserByEmailOrUsername(authUser.email!);
+    } else {
+      const username = Buffer.from(token, "base64").toString("utf8");
+      return await dbAdapter.getUserByUsername(username);
     }
-
-    const username = Buffer.from(token, "base64").toString("utf8");
-    return await dbAdapter.getUserByUsername(username);
   } catch (e) {
     return null;
   }
@@ -1005,9 +1005,8 @@ app.post("/api/auth/login", ipRateLimiter(60000, 10, "Too many login attempts fr
       return;
     }
 
-    let authToken = "";
+    let token = "";
     let loginSuccess = false;
-    const passwordMatches = verifyPassword(password, user.passwordHash);
 
     if (useSupabase && supabase) {
       // Attempt native Supabase Auth (GoTrue) login
@@ -1017,12 +1016,13 @@ app.post("/api/auth/login", ipRateLimiter(60000, 10, "Too many login attempts fr
       });
 
       if (!authError && authData?.session) {
-        authToken = authData.session.access_token;
+        token = authData.session.access_token;
         loginSuccess = true;
       } else {
         // Automatic on-the-fly migration to GoTrue Auth
         // If the login failed on Supabase but the password matches our local hash, auto-register them in Supabase Auth!
-        if (passwordMatches) {
+        const incomingHash = hashPassword(password);
+        if (user.passwordHash === incomingHash) {
           console.log(`[Supabase Auth] Migrating existing user ${user.username} with email ${user.email} to GoTrue Auth...`);
           if (supabase.auth.admin) {
             const { data: newUser, error: createError } = await supabase.auth.admin.createUser({
@@ -1038,7 +1038,7 @@ app.post("/api/auth/login", ipRateLimiter(60000, 10, "Too many login attempts fr
                 password: password,
               });
               if (!retryError && retryData?.session) {
-                authToken = retryData.session.access_token;
+                token = retryData.session.access_token;
                 loginSuccess = true;
               } else {
                 console.error("[Supabase Auth] Retry sign-in failed post-creation:", retryError);
@@ -1049,15 +1049,16 @@ app.post("/api/auth/login", ipRateLimiter(60000, 10, "Too many login attempts fr
           } else {
             console.warn("[Supabase Auth] admin auth is not available. Falling back to local token generation.");
             // Generate standard fallback token for valid password matching local DB hash
-            authToken = Buffer.from(user.username).toString("base64");
+            token = Buffer.from(user.username).toString("base64");
             loginSuccess = true;
           }
         }
       }
     } else {
       // Local JSON DB fallback login check
-      if (passwordMatches) {
-        authToken = Buffer.from(user.username).toString("base64");
+      const incomingHash = hashPassword(password);
+      if (user.passwordHash === incomingHash) {
+        token = Buffer.from(user.username).toString("base64");
         loginSuccess = true;
       }
     }
@@ -1085,12 +1086,6 @@ app.post("/api/auth/login", ipRateLimiter(60000, 10, "Too many login attempts fr
     // Login success: reset failed login attempts
     loginAttempts.delete(cleanUsername);
 
-    if (passwordMatches && !user.passwordHash.startsWith("scrypt$")) {
-      await dbAdapter.updateUser(user.id, { passwordHash: hashPassword(password) });
-    }
-
-    setSessionCookie(res, authToken);
-
     res.json({
       user: {
         id: user.id,
@@ -1105,6 +1100,7 @@ app.post("/api/auth/login", ipRateLimiter(60000, 10, "Too many login attempts fr
         monthlyHoursCap: user.monthlyHoursCap,
         photoUrl: user.photoUrl,
       },
+      token,
     });
   } catch (error: any) {
     console.error("[Login Handler Exception]:", error);
@@ -1114,36 +1110,24 @@ app.post("/api/auth/login", ipRateLimiter(60000, 10, "Too many login attempts fr
 
 // 2. Me Endpoint
 app.get("/api/auth/me", async (req, res) => {
-  const user = await getUserFromToken(req.headers.authorization, req);
+  const user = await getUserFromToken(req.headers.authorization);
   if (!user) {
     res.status(401).json({ error: "Unauthorized" });
     return;
   }
-
   res.json({
-    user: {
-      id: user.id,
-      username: user.username,
-      email: user.email,
-      name: user.name,
-      role: user.role,
-      hourlyRate: user.hourlyRate,
-      workType: user.workType,
-      scheduleStart: user.scheduleStart,
-      scheduleEnd: user.scheduleEnd,
-      monthlyHoursCap: user.monthlyHoursCap,
-      photoUrl: user.photoUrl,
-    },
+    id: user.id,
+    username: user.username,
+    email: user.email,
+    name: user.name,
+    role: user.role,
+    hourlyRate: user.hourlyRate,
+    workType: user.workType,
+    scheduleStart: user.scheduleStart,
+    scheduleEnd: user.scheduleEnd,
+    monthlyHoursCap: user.monthlyHoursCap,
+    photoUrl: user.photoUrl,
   });
-});
-
-app.post("/api/auth/logout", async (req, res) => {
-  const sessionToken = readSessionToken(req);
-  if (sessionToken) {
-    sessionStore.delete(sessionToken);
-  }
-  clearSessionCookie(res);
-  res.json({ success: true });
 });
 
 // 2.0a Password Reset Request (Forgot Password - Protected with IP rate limiter)
@@ -1305,7 +1289,7 @@ app.post("/api/auth/reset-password", ipRateLimiter(60000, 5, "Too many reset ver
 
 // 2.1 Get users (Admin only)
 app.get("/api/users", async (req, res) => {
-  const user = await getUserFromToken(req.headers.authorization, req);
+  const user = await getUserFromToken(req.headers.authorization);
   if (!user || user.role !== "admin") {
     res.status(403).json({ error: "Admin access required" });
     return;
@@ -1317,7 +1301,7 @@ app.get("/api/users", async (req, res) => {
 
 // 2.2 Update own profile (VAs can edit photo, name)
 app.patch("/api/users/profile", async (req, res) => {
-  const user = await getUserFromToken(req.headers.authorization, req);
+  const user = await getUserFromToken(req.headers.authorization);
   if (!user) {
     res.status(401).json({ error: "Unauthorized" });
     return;
@@ -1335,8 +1319,8 @@ app.patch("/api/users/profile", async (req, res) => {
   }
   
   if (photoUrl !== undefined) {
-    if (typeof photoUrl !== "string" || photoUrl.length > 500) {
-      res.status(400).json({ error: "Invalid photo URL. Maximum length is 500 characters." });
+    if (typeof photoUrl !== "string" || photoUrl.length > 5000000) {
+      res.status(400).json({ error: "Invalid photo. Upload size exceeds maximum limits." });
       return;
     }
     updates.photoUrl = photoUrl.trim();
@@ -1353,7 +1337,7 @@ app.patch("/api/users/profile", async (req, res) => {
 
 // 2.3 Update user (Admin edit VA: name, workType, scheduleStart, scheduleEnd, monthlyHoursCap, hourlyRate)
 app.patch("/api/users/:id", async (req, res) => {
-  const adminUser = await getUserFromToken(req.headers.authorization, req);
+  const adminUser = await getUserFromToken(req.headers.authorization);
   if (!adminUser || adminUser.role !== "admin") {
     res.status(403).json({ error: "Admin access required" });
     return;
@@ -1384,7 +1368,7 @@ app.patch("/api/users/:id", async (req, res) => {
 
 // 2.4 Tasks APIs
 app.get("/api/tasks", async (req, res) => {
-  const user = await getUserFromToken(req.headers.authorization, req);
+  const user = await getUserFromToken(req.headers.authorization);
   if (!user) {
     res.status(401).json({ error: "Unauthorized" });
     return;
@@ -1400,7 +1384,7 @@ app.get("/api/tasks", async (req, res) => {
 });
 
 app.post("/api/tasks", async (req, res) => {
-  const user = await getUserFromToken(req.headers.authorization, req);
+  const user = await getUserFromToken(req.headers.authorization);
   if (!user) {
     res.status(401).json({ error: "Unauthorized" });
     return;
@@ -1461,7 +1445,7 @@ app.post("/api/tasks", async (req, res) => {
 });
 
 app.patch("/api/tasks/:id", async (req, res) => {
-  const user = await getUserFromToken(req.headers.authorization, req);
+  const user = await getUserFromToken(req.headers.authorization);
   if (!user) {
     res.status(401).json({ error: "Unauthorized" });
     return;
@@ -1528,7 +1512,7 @@ app.patch("/api/tasks/:id", async (req, res) => {
 });
 
 app.delete("/api/tasks/:id", async (req, res) => {
-  const user = await getUserFromToken(req.headers.authorization, req);
+  const user = await getUserFromToken(req.headers.authorization);
   if (!user) {
     res.status(401).json({ error: "Unauthorized" });
     return;
@@ -1552,7 +1536,7 @@ app.delete("/api/tasks/:id", async (req, res) => {
 
 // 3. Get Logs Endpoint
 app.get("/api/logs", async (req, res) => {
-  const user = await getUserFromToken(req.headers.authorization, req);
+  const user = await getUserFromToken(req.headers.authorization);
   if (!user) {
     res.status(401).json({ error: "Unauthorized" });
     return;
@@ -1569,7 +1553,7 @@ app.get("/api/logs", async (req, res) => {
 
 // 4. Create manual log or clock-in
 app.post("/api/logs", async (req, res) => {
-  const user = await getUserFromToken(req.headers.authorization, req);
+  const user = await getUserFromToken(req.headers.authorization);
   if (!user) {
     res.status(401).json({ error: "Unauthorized" });
     return;
@@ -1610,7 +1594,7 @@ app.post("/api/logs", async (req, res) => {
 
 // 5. Clock-out Endpoint
 app.post("/api/logs/clock-out", async (req, res) => {
-  const user = await getUserFromToken(req.headers.authorization, req);
+  const user = await getUserFromToken(req.headers.authorization);
   if (!user) {
     res.status(401).json({ error: "Unauthorized" });
     return;
@@ -1639,7 +1623,7 @@ app.post("/api/logs/clock-out", async (req, res) => {
 
 // 6. Delete Log
 app.delete("/api/logs/:id", async (req, res) => {
-  const user = await getUserFromToken(req.headers.authorization, req);
+  const user = await getUserFromToken(req.headers.authorization);
   if (!user) {
     res.status(401).json({ error: "Unauthorized" });
     return;
@@ -1665,7 +1649,7 @@ app.delete("/api/logs/:id", async (req, res) => {
 
 // 7. Admin edit log (update description / duration / endTime)
 app.patch("/api/logs/:id", async (req, res) => {
-  const user = await getUserFromToken(req.headers.authorization, req);
+  const user = await getUserFromToken(req.headers.authorization);
   if (!user || user.role !== "admin") {
     res.status(403).json({ error: "Admin access required" });
     return;
@@ -1688,17 +1672,17 @@ app.patch("/api/logs/:id", async (req, res) => {
 });
 
 async function syncEnvCredentials() {
-  const adminUsername = portalEnv.devUserName;
-  const adminEmail = portalEnv.devUserEmail;
-  const adminPassword = portalEnv.devUserPassword;
-  const adminName = portalEnv.devUserFullName;
+  const adminUsername = process.env.DEV_USER_NAME || "admin";
+  const adminEmail = process.env.DEV_USER_EMAIL || "admin@example.com";
+  const adminPassword = process.env.DEV_USER_PASSWORD || "admin123";
+  const adminName = process.env.DEV_USER_FULLNAME || "Admin User";
 
   const incomingHash = hashPassword(adminPassword);
 
-  const izavaUsername = portalEnv.izaVaUsername;
-  const izavaEmail = portalEnv.izaVaEmail;
-  const izavaName = portalEnv.izaVaName;
-  const izavaPassword = portalEnv.izaVaPassword;
+  const izavaUsername = process.env.IZA_VA_USERNAME || "va_member";
+  const izavaEmail = process.env.IZA_VA_EMAIL || "va_member@example.com";
+  const izavaName = process.env.IZA_VA_NAME || "VA Member";
+  const izavaPassword = process.env.IZA_VA_PASSWORD || "izava123";
   const izavaHash = hashPassword(izavaPassword);
 
   // Sync admin and iza_va in local database
