@@ -33,6 +33,10 @@ export default function App() {
   const [maskedEmail, setMaskedEmail] = useState('');
   const [loginSuccessMessage, setLoginSuccessMessage] = useState('');
 
+  useEffect(() => {
+    document.title = 'Zuki Creatives Portal';
+  }, []);
+
   // 1. Initial auth check on mount
   useEffect(() => {
     const checkAuth = async () => {
@@ -50,7 +54,8 @@ export default function App() {
         });
 
         if (response.ok) {
-          const userData = await response.json();
+          const result = await response.json();
+          const userData = result.user ?? result;
           setUser(userData);
           setToken(storedToken);
           setActiveTab(userData.role === 'admin' ? 'admin' : 'dashboard');

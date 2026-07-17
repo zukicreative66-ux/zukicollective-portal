@@ -1061,8 +1061,10 @@ app.post("/api/auth/login", ipRateLimiter(60000, 10, "Too many login attempts fr
       }
     } else {
       // Local JSON DB fallback login check
-        const passwordMatches = verifyPassword(password, user.passwordHash);
-        if (passwordMatches) {
+      const passwordMatches = verifyPassword(password, user.passwordHash);
+      if (passwordMatches) {
+        token = Buffer.from(user.username).toString("base64");
+        loginSuccess = true;
       }
     }
 
@@ -1613,7 +1615,8 @@ app.post("/api/logs/clock-out", async (req, res) => {
 
   const endTime = new Date().toISOString();
   const diffMs = new Date(endTime).getTime() - new Date(activeLog.startTime).getTime();
-  const durationMinutes = Math.max(1, Math.round(diffMs / 60000)); // Minimum 1 minute
+  const minutes = diffMs / 60000;
+  const durationMinutes = Math.max(0, Math.round(minutes / 60) * 60);
 
   const updated = await dbAdapter.updateLog(activeLog.id, {
     endTime,

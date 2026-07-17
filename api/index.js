@@ -1,35 +1,15 @@
 // server.ts
 import express from "express";
-import path2 from "path";
+import path from "path";
 import fs from "fs";
 import crypto from "crypto";
 import nodemailer from "nodemailer";
 import { createClient } from "@supabase/supabase-js";
-
-// auth-env.ts
-import dotenv from "dotenv";
-import path from "path";
-function loadPortalEnvironment() {
-  dotenv.config({ path: path.resolve(process.cwd(), ".env") });
-  return {
-    devUserName: process.env.DEV_USER_NAME || "admin",
-    devUserEmail: process.env.DEV_USER_EMAIL || "admin@example.com",
-    devUserPassword: process.env.DEV_USER_PASSWORD || "admin123",
-    devUserFullName: process.env.DEV_USER_FULLNAME || "Admin User",
-    izaVaUsername: process.env.IZA_VA_USERNAME || "va_member",
-    izaVaEmail: process.env.IZA_VA_EMAIL || "va_member@example.com",
-    izaVaName: process.env.IZA_VA_NAME || "VA Member",
-    izaVaPassword: process.env.IZA_VA_PASSWORD || "izava123"
-  };
-}
-
-// server.ts
 var app = express();
-var PORT = Number(process.env.PORT || 3e3);
+var PORT = 3e3;
 var isVercel = !!process.env.VERCEL;
-var portalEnv = loadPortalEnvironment();
-var ORIGINAL_DB_FILE = path2.join(process.cwd(), "db_data.json");
-var DB_FILE = isVercel ? path2.join("/tmp", "db_data.json") : ORIGINAL_DB_FILE;
+var ORIGINAL_DB_FILE = path.join(process.cwd(), "db_data.json");
+var DB_FILE = isVercel ? path.join("/tmp", "db_data.json") : ORIGINAL_DB_FILE;
 var supabaseUrl = process.env.SUPABASE_URL || "https://yksuujwiczjpidigumnm.supabase.co";
 var supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 var useSupabase = !!supabaseServiceKey;
@@ -40,47 +20,12 @@ if (useSupabase) {
   console.log(`[Database] Running with local JSON database fallback: ${DB_FILE}`);
 }
 var resetTokens = /* @__PURE__ */ new Map();
-var sessionStore = /* @__PURE__ */ new Map();
 function hashPassword(password) {
-  const salt = crypto.randomBytes(16).toString("hex");
-  const derivedKey = crypto.scryptSync(password, salt, 64).toString("hex");
-  return `scrypt$${salt}$${derivedKey}`;
+  return crypto.createHash("sha256").update(password).digest("hex");
 }
 function verifyPassword(password, storedHash) {
   if (!storedHash) return false;
-  if (storedHash.startsWith("scrypt$")) {
-    const [, salt, expectedHash] = storedHash.split("$");
-    if (!salt || !expectedHash) return false;
-    const derivedKey = crypto.scryptSync(password, salt, 64).toString("hex");
-    if (derivedKey.length !== expectedHash.length) return false;
-    return crypto.timingSafeEqual(Buffer.from(derivedKey, "hex"), Buffer.from(expectedHash, "hex"));
-  }
   return crypto.createHash("sha256").update(password).digest("hex") === storedHash;
-}
-function getSessionCookieOptions() {
-  const isSecure = process.env.NODE_ENV === "production" || isVercel;
-  return {
-    httpOnly: true,
-    secure: isSecure,
-    sameSite: "lax",
-    path: "/",
-    maxAge: 60 * 60 * 24 * 7
-  };
-}
-function setSessionCookie(res, token) {
-  res.cookie("portal_session", token, getSessionCookieOptions());
-}
-function clearSessionCookie(res) {
-  res.clearCookie("portal_session", { path: "/" });
-}
-function readSessionToken(req) {
-  const authHeader = req.headers.authorization;
-  if (authHeader && authHeader.startsWith("Bearer ")) {
-    return authHeader.split(" ")[1];
-  }
-  const cookieHeader = req.headers.cookie || "";
-  const match = cookieHeader.match(/(?:^|;\s*)portal_session=([^;]+)/);
-  return match ? decodeURIComponent(match[1]) : null;
 }
 async function sendResetEmail(email, username, otp) {
   const host = process.env.AGENCY_EMAIL_SMTP_HOST || "smtp.gmail.com";
@@ -144,14 +89,14 @@ Zuki Agency Admin`,
   }
 }
 function getSeededUsers() {
-  const adminUsername = portalEnv.devUserName;
-  const adminEmail = portalEnv.devUserEmail;
-  const adminPassword = portalEnv.devUserPassword;
-  const adminName = portalEnv.devUserFullName;
-  const izavaUsername = portalEnv.izaVaUsername;
-  const izavaEmail = portalEnv.izaVaEmail;
-  const izavaName = portalEnv.izaVaName;
-  const izavaPassword = portalEnv.izaVaPassword;
+  const adminUsername = process.env.DEV_USER_NAME || "admin";
+  const adminEmail = process.env.DEV_USER_EMAIL || "admin@example.com";
+  const adminPassword = process.env.DEV_USER_PASSWORD || "admin123";
+  const adminName = process.env.DEV_USER_FULLNAME || "Admin User";
+  const izavaUsername = process.env.IZA_VA_USERNAME || "va_member";
+  const izavaEmail = process.env.IZA_VA_EMAIL || "va_member@example.com";
+  const izavaName = process.env.IZA_VA_NAME || "VA Member";
+  const izavaPassword = process.env.IZA_VA_PASSWORD || "izava123";
   return [
     {
       id: "user-admin",
@@ -179,13 +124,31 @@ function getSeededUsers() {
       scheduleStart: "09:00",
       scheduleEnd: "17:00",
       photoUrl: "",
-      monthlyHoursCap: 160
+      monthlyHoursCap: 50
+      // Capped at 50 hours as per requirements
+    },
+    {
+      id: "user-va2",
+      username: "va_member2",
+      email: "va_member2@example.com",
+      passwordHash: hashPassword("va_member123"),
+      // Seeded VA 2 with credentials
+      name: "VA Member Two",
+      role: "va",
+      hourlyRate: 200,
+      // PHP 200 per hour standard
+      workType: "part-time",
+      scheduleStart: "08:00",
+      scheduleEnd: "16:00",
+      photoUrl: "",
+      monthlyHoursCap: 50
+      // Capped at 50 hours as per requirements
     }
   ];
 }
 function getDefaultDB() {
-  const adminUsername = portalEnv.devUserName;
-  const adminName = portalEnv.devUserFullName;
+  const adminUsername = process.env.DEV_USER_NAME || "admin";
+  const adminName = process.env.DEV_USER_FULLNAME || "Admin User";
   return {
     users: getSeededUsers(),
     logs: [
@@ -291,12 +254,12 @@ function readDB() {
     const db = JSON.parse(raw);
     if (!db.tasks) db.tasks = [];
     if (!db.users) db.users = [];
-    const adminUsername = (process.env.DEV_USER_NAME || "admin").toLowerCase().trim();
-    const izavaUsername = (process.env.IZA_VA_USERNAME || "va_member").toLowerCase().trim();
+    const seededUsernames = getSeededUsers().map((u) => u.username.toLowerCase().trim());
     db.users = db.users.filter((u) => {
       const uName = (u.username || "").toLowerCase().trim();
-      return uName === adminUsername || uName === izavaUsername;
+      return seededUsernames.includes(uName);
     });
+    const adminUsername = (process.env.DEV_USER_NAME || "admin").toLowerCase().trim();
     let migrated = false;
     db.users = db.users.map((u) => {
       let pwd = u.passwordHash;
@@ -640,6 +603,11 @@ var dbAdapter = {
   async getUserByUsername(username) {
     const cleanUsername = sanitizePostgrestString(username).toLowerCase().trim();
     if (!cleanUsername) return null;
+    const adminUsername = (process.env.DEV_USER_NAME || "admin").toLowerCase().trim();
+    const izavaUsername = (process.env.IZA_VA_USERNAME || "va_member").toLowerCase().trim();
+    if (cleanUsername !== adminUsername && cleanUsername !== izavaUsername) {
+      return null;
+    }
     if (supabase) {
       const { data, error } = await supabase.from("users").select("*").ilike("username", cleanUsername);
       if (!error && data && data.length > 0) {
@@ -657,15 +625,32 @@ var dbAdapter = {
     if (supabase) {
       const { data, error } = await supabase.from("users").select("*").eq("id", id).maybeSingle();
       if (!error && data) user = mapUserFromDb(data);
-    } else {
+    }
+    if (!user) {
       const db = readDB();
       user = db.users.find((u) => u.id === id) || null;
     }
-    return user;
+    if (user) {
+      const adminUsername = (process.env.DEV_USER_NAME || "admin").toLowerCase().trim();
+      const izavaUsername = (process.env.IZA_VA_USERNAME || "va_member").toLowerCase().trim();
+      const uname = (user.username || "").toLowerCase().trim();
+      if (uname === adminUsername || uname === izavaUsername) {
+        return user;
+      }
+    }
+    return null;
   },
   async getUserByEmailOrUsername(searchStr) {
     const cleanSearch = sanitizePostgrestString(searchStr.toLowerCase()).trim();
     if (!cleanSearch) return null;
+    const adminUsername = (process.env.DEV_USER_NAME || "admin").toLowerCase().trim();
+    const adminEmail = (process.env.DEV_USER_EMAIL || "admin@example.com").toLowerCase().trim();
+    const izavaUsername = (process.env.IZA_VA_USERNAME || "va_member").toLowerCase().trim();
+    const izavaEmail = (process.env.IZA_VA_EMAIL || "va_member@example.com").toLowerCase().trim();
+    const isSearchAllowed = cleanSearch === adminUsername || cleanSearch === adminEmail || cleanSearch === izavaUsername || cleanSearch === izavaEmail;
+    if (!isSearchAllowed) {
+      return null;
+    }
     if (supabase) {
       const { data, error } = await supabase.from("users").select("*").or(`username.ilike.${cleanSearch},email.ilike.${cleanSearch}`).maybeSingle();
       if (!error && data) return mapUserFromDb(data);
@@ -674,33 +659,43 @@ var dbAdapter = {
     return db.users.find((u) => u.username.toLowerCase().trim() === cleanSearch || u.email.toLowerCase().trim() === cleanSearch) || null;
   },
   async updateUser(id, updates) {
+    let updatedUser = null;
     if (supabase) {
       const dbUpdates = await mapUserToDb(updates);
       const { data, error } = await supabase.from("users").update(dbUpdates).eq("id", id).select().maybeSingle();
       if (!error && data) {
-        const mappedUser = mapUserFromDb(data);
+        updatedUser = mapUserFromDb(data);
         if (updates.name) {
           const logCasing = await detectLogCasing();
           const updateObj = { name: updates.name };
           const logUserIdKey = logCasing === "snake" ? "user_id" : logCasing === "lowercase" ? "userid" : "userId";
           await supabase.from("logs").update(updateObj).eq(logUserIdKey, id);
         }
-        return mappedUser;
+      } else {
+        console.error("[Supabase Error] updateUser fallback:", error);
       }
-      console.error("[Supabase Error] updateUser fallback:", error);
     }
     const db = readDB();
-    const idx = db.users.findIndex((u) => u.id === id);
+    let idx = db.users.findIndex((u) => u.id === id);
+    if (idx === -1) {
+      const resolvedUser = await dbAdapter.getUserById(id);
+      if (resolvedUser) {
+        idx = db.users.findIndex((u) => u.username.toLowerCase().trim() === resolvedUser.username.toLowerCase().trim());
+      }
+    }
     if (idx !== -1) {
       db.users[idx] = { ...db.users[idx], ...updates };
       if (updates.name) {
         db.logs.forEach((log) => {
-          if (log.userId === id) log.name = updates.name;
+          if (log.userId === id || idx !== -1 && log.userId === db.users[idx].id) {
+            log.name = updates.name;
+          }
         });
       }
       writeDB(db);
-      return db.users[idx];
+      return updatedUser || db.users[idx];
     }
+    if (updatedUser) return updatedUser;
     throw new Error("User not found");
   },
   async getTasks(userId) {
@@ -723,38 +718,43 @@ var dbAdapter = {
     return db.tasks;
   },
   async createTask(task) {
+    let createdTask = null;
     if (supabase) {
       const dbTask = await mapTaskToDb(task);
       const { data, error } = await supabase.from("tasks").insert(dbTask).select().maybeSingle();
-      if (!error && data) return mapTaskFromDb(data);
-      console.error("[Supabase Error] createTask fallback:", error);
+      if (!error && data) createdTask = mapTaskFromDb(data);
+      else console.error("[Supabase Error] createTask fallback:", error);
     }
     const db = readDB();
-    db.tasks.unshift(task);
+    const taskToSave = createdTask || task;
+    db.tasks.unshift(taskToSave);
     writeDB(db);
-    return task;
+    return taskToSave;
   },
   async updateTask(id, updates) {
+    let updatedTask = null;
     if (supabase) {
       const dbUpdates = await mapTaskToDb(updates);
       const { data, error } = await supabase.from("tasks").update(dbUpdates).eq("id", id).select().maybeSingle();
-      if (!error && data) return mapTaskFromDb(data);
-      console.error("[Supabase Error] updateTask fallback:", error);
+      if (!error && data) updatedTask = mapTaskFromDb(data);
+      else console.error("[Supabase Error] updateTask fallback:", error);
     }
     const db = readDB();
     const idx = db.tasks.findIndex((t) => t.id === id);
     if (idx !== -1) {
       db.tasks[idx] = { ...db.tasks[idx], ...updates };
       writeDB(db);
-      return db.tasks[idx];
+      return updatedTask || db.tasks[idx];
     }
+    if (updatedTask) return updatedTask;
     throw new Error("Task not found");
   },
   async deleteTask(id) {
+    let deletedFromSupabase = false;
     if (supabase) {
       const { error } = await supabase.from("tasks").delete().eq("id", id);
-      if (!error) return true;
-      console.error("[Supabase Error] deleteTask fallback:", error);
+      if (!error) deletedFromSupabase = true;
+      else console.error("[Supabase Error] deleteTask fallback:", error);
     }
     const db = readDB();
     const idx = db.tasks.findIndex((t) => t.id === id);
@@ -763,7 +763,7 @@ var dbAdapter = {
       writeDB(db);
       return true;
     }
-    return false;
+    return deletedFromSupabase;
   },
   async getLogs(userId) {
     if (supabase) {
@@ -794,41 +794,46 @@ var dbAdapter = {
       if (error) console.error("[Supabase Error] getActiveLog fallback:", error);
     }
     const db = readDB();
-    return db.logs.find((l) => l.userId === userId && l.endTime === null) || null;
+    return db.logs.find((l) => l.userId === userId && !l.endTime) || null;
   },
   async createLog(log) {
+    let createdLog = null;
     if (supabase) {
       const dbLog = await mapLogToDb(log);
       const { data, error } = await supabase.from("logs").insert(dbLog).select().maybeSingle();
-      if (!error && data) return mapLogFromDb(data);
-      console.error("[Supabase Error] createLog fallback:", error);
+      if (!error && data) createdLog = mapLogFromDb(data);
+      else console.error("[Supabase Error] createLog fallback:", error);
     }
     const db = readDB();
-    db.logs.unshift(log);
+    const logToSave = createdLog || log;
+    db.logs.unshift(logToSave);
     writeDB(db);
-    return log;
+    return logToSave;
   },
   async updateLog(id, updates) {
+    let updatedLog = null;
     if (supabase) {
       const dbUpdates = await mapLogToDb(updates);
       const { data, error } = await supabase.from("logs").update(dbUpdates).eq("id", id).select().maybeSingle();
-      if (!error && data) return mapLogFromDb(data);
-      console.error("[Supabase Error] updateLog fallback:", error);
+      if (!error && data) updatedLog = mapLogFromDb(data);
+      else console.error("[Supabase Error] updateLog fallback:", error);
     }
     const db = readDB();
     const idx = db.logs.findIndex((l) => l.id === id);
     if (idx !== -1) {
       db.logs[idx] = { ...db.logs[idx], ...updates };
       writeDB(db);
-      return db.logs[idx];
+      return updatedLog || db.logs[idx];
     }
+    if (updatedLog) return updatedLog;
     throw new Error("Log not found");
   },
   async deleteLog(id) {
+    let deletedFromSupabase = false;
     if (supabase) {
       const { error } = await supabase.from("logs").delete().eq("id", id);
-      if (!error) return true;
-      console.error("[Supabase Error] deleteLog fallback:", error);
+      if (!error) deletedFromSupabase = true;
+      else console.error("[Supabase Error] deleteLog fallback:", error);
     }
     const db = readDB();
     const idx = db.logs.findIndex((l) => l.id === id);
@@ -837,21 +842,10 @@ var dbAdapter = {
       writeDB(db);
       return true;
     }
-    return false;
+    return deletedFromSupabase;
   }
 };
 app.use(express.json());
-app.get(["/db_data.json", "/metadata.json", "/package.json", "/.env"], (_req, res) => {
-  res.status(404).json({ error: "Not found" });
-});
-app.use((req, res, next) => {
-  const path3 = req.path || "";
-  const isApiLikeRoute = path3.startsWith("/auth/") || path3.startsWith("/users") || path3.startsWith("/tasks") || path3.startsWith("/logs");
-  if (isApiLikeRoute && !path3.startsWith("/api")) {
-    req.url = `/api${req.url}`;
-  }
-  next();
-});
 app.use((req, res, next) => {
   res.setHeader("X-Content-Type-Options", "nosniff");
   res.setHeader("X-Frame-Options", "SAMEORIGIN");
@@ -888,19 +882,25 @@ function ipRateLimiter(windowMs, maxRequests, message) {
 }
 app.use("/api", ipRateLimiter(6e4, 150, "Too many API requests from this IP. Please slow down."));
 var loginAttempts = /* @__PURE__ */ new Map();
-async function getUserFromToken(authHeader, req) {
-  const token = req ? readSessionToken(req) : authHeader && authHeader.startsWith("Bearer ") ? authHeader.split(" ")[1] : null;
-  if (!token) return null;
+async function getUserFromToken(authHeader) {
+  if (!authHeader || !authHeader.startsWith("Bearer ")) return null;
+  const token = authHeader.split(" ")[1];
   try {
     if (useSupabase && supabase) {
       const { data: { user: authUser }, error } = await supabase.auth.getUser(token);
       if (error || !authUser) {
-        return null;
+        try {
+          const username = Buffer.from(token, "base64").toString("utf8");
+          return await dbAdapter.getUserByUsername(username);
+        } catch (e) {
+          return null;
+        }
       }
       return await dbAdapter.getUserByEmailOrUsername(authUser.email);
+    } else {
+      const username = Buffer.from(token, "base64").toString("utf8");
+      return await dbAdapter.getUserByUsername(username);
     }
-    const username = Buffer.from(token, "base64").toString("utf8");
-    return await dbAdapter.getUserByUsername(username);
   } catch (e) {
     return null;
   }
@@ -924,18 +924,18 @@ app.post("/api/auth/login", ipRateLimiter(6e4, 10, "Too many login attempts from
       res.status(401).json({ error: "Invalid username or password" });
       return;
     }
-    let authToken = "";
+    let token = "";
     let loginSuccess = false;
-    const passwordMatches = verifyPassword(password, user.passwordHash);
     if (useSupabase && supabase) {
       const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
         email: user.email,
         password
       });
       if (!authError && authData?.session) {
-        authToken = authData.session.access_token;
+        token = authData.session.access_token;
         loginSuccess = true;
       } else {
+        const passwordMatches = verifyPassword(password, user.passwordHash);
         if (passwordMatches) {
           console.log(`[Supabase Auth] Migrating existing user ${user.username} with email ${user.email} to GoTrue Auth...`);
           if (supabase.auth.admin) {
@@ -950,7 +950,7 @@ app.post("/api/auth/login", ipRateLimiter(6e4, 10, "Too many login attempts from
                 password
               });
               if (!retryError && retryData?.session) {
-                authToken = retryData.session.access_token;
+                token = retryData.session.access_token;
                 loginSuccess = true;
               } else {
                 console.error("[Supabase Auth] Retry sign-in failed post-creation:", retryError);
@@ -960,14 +960,15 @@ app.post("/api/auth/login", ipRateLimiter(6e4, 10, "Too many login attempts from
             }
           } else {
             console.warn("[Supabase Auth] admin auth is not available. Falling back to local token generation.");
-            authToken = Buffer.from(user.username).toString("base64");
+            token = Buffer.from(user.username).toString("base64");
             loginSuccess = true;
           }
         }
       }
     } else {
+      const passwordMatches = verifyPassword(password, user.passwordHash);
       if (passwordMatches) {
-        authToken = Buffer.from(user.username).toString("base64");
+        token = Buffer.from(user.username).toString("base64");
         loginSuccess = true;
       }
     }
@@ -992,10 +993,6 @@ app.post("/api/auth/login", ipRateLimiter(6e4, 10, "Too many login attempts from
       return;
     }
     loginAttempts.delete(cleanUsername);
-    if (passwordMatches && !user.passwordHash.startsWith("scrypt$")) {
-      await dbAdapter.updateUser(user.id, { passwordHash: hashPassword(password) });
-    }
-    setSessionCookie(res, authToken);
     res.json({
       user: {
         id: user.id,
@@ -1009,7 +1006,8 @@ app.post("/api/auth/login", ipRateLimiter(6e4, 10, "Too many login attempts from
         scheduleEnd: user.scheduleEnd,
         monthlyHoursCap: user.monthlyHoursCap,
         photoUrl: user.photoUrl
-      }
+      },
+      token
     });
   } catch (error) {
     console.error("[Login Handler Exception]:", error);
@@ -1017,34 +1015,24 @@ app.post("/api/auth/login", ipRateLimiter(6e4, 10, "Too many login attempts from
   }
 });
 app.get("/api/auth/me", async (req, res) => {
-  const user = await getUserFromToken(req.headers.authorization, req);
+  const user = await getUserFromToken(req.headers.authorization);
   if (!user) {
     res.status(401).json({ error: "Unauthorized" });
     return;
   }
   res.json({
-    user: {
-      id: user.id,
-      username: user.username,
-      email: user.email,
-      name: user.name,
-      role: user.role,
-      hourlyRate: user.hourlyRate,
-      workType: user.workType,
-      scheduleStart: user.scheduleStart,
-      scheduleEnd: user.scheduleEnd,
-      monthlyHoursCap: user.monthlyHoursCap,
-      photoUrl: user.photoUrl
-    }
+    id: user.id,
+    username: user.username,
+    email: user.email,
+    name: user.name,
+    role: user.role,
+    hourlyRate: user.hourlyRate,
+    workType: user.workType,
+    scheduleStart: user.scheduleStart,
+    scheduleEnd: user.scheduleEnd,
+    monthlyHoursCap: user.monthlyHoursCap,
+    photoUrl: user.photoUrl
   });
-});
-app.post("/api/auth/logout", async (req, res) => {
-  const sessionToken = readSessionToken(req);
-  if (sessionToken) {
-    sessionStore.delete(sessionToken);
-  }
-  clearSessionCookie(res);
-  res.json({ success: true });
 });
 app.post("/api/auth/forgot-password", ipRateLimiter(6e4, 5, "Too many password reset requests. Please try again in 1 minute."), async (req, res) => {
   try {
@@ -1178,7 +1166,7 @@ app.post("/api/auth/reset-password", ipRateLimiter(6e4, 5, "Too many reset verif
   }
 });
 app.get("/api/users", async (req, res) => {
-  const user = await getUserFromToken(req.headers.authorization, req);
+  const user = await getUserFromToken(req.headers.authorization);
   if (!user || user.role !== "admin") {
     res.status(403).json({ error: "Admin access required" });
     return;
@@ -1188,7 +1176,7 @@ app.get("/api/users", async (req, res) => {
   res.json(cleanUsers);
 });
 app.patch("/api/users/profile", async (req, res) => {
-  const user = await getUserFromToken(req.headers.authorization, req);
+  const user = await getUserFromToken(req.headers.authorization);
   if (!user) {
     res.status(401).json({ error: "Unauthorized" });
     return;
@@ -1203,8 +1191,8 @@ app.patch("/api/users/profile", async (req, res) => {
     updates.name = name.replace(/[<>]/g, "").trim();
   }
   if (photoUrl !== void 0) {
-    if (typeof photoUrl !== "string" || photoUrl.length > 500) {
-      res.status(400).json({ error: "Invalid photo URL. Maximum length is 500 characters." });
+    if (typeof photoUrl !== "string" || photoUrl.length > 5e6) {
+      res.status(400).json({ error: "Invalid photo. Upload size exceeds maximum limits." });
       return;
     }
     updates.photoUrl = photoUrl.trim();
@@ -1218,7 +1206,7 @@ app.patch("/api/users/profile", async (req, res) => {
   }
 });
 app.patch("/api/users/:id", async (req, res) => {
-  const adminUser = await getUserFromToken(req.headers.authorization, req);
+  const adminUser = await getUserFromToken(req.headers.authorization);
   if (!adminUser || adminUser.role !== "admin") {
     res.status(403).json({ error: "Admin access required" });
     return;
@@ -1245,7 +1233,7 @@ app.patch("/api/users/:id", async (req, res) => {
   }
 });
 app.get("/api/tasks", async (req, res) => {
-  const user = await getUserFromToken(req.headers.authorization, req);
+  const user = await getUserFromToken(req.headers.authorization);
   if (!user) {
     res.status(401).json({ error: "Unauthorized" });
     return;
@@ -1259,7 +1247,7 @@ app.get("/api/tasks", async (req, res) => {
   }
 });
 app.post("/api/tasks", async (req, res) => {
-  const user = await getUserFromToken(req.headers.authorization, req);
+  const user = await getUserFromToken(req.headers.authorization);
   if (!user) {
     res.status(401).json({ error: "Unauthorized" });
     return;
@@ -1311,7 +1299,7 @@ app.post("/api/tasks", async (req, res) => {
   res.status(201).json(created);
 });
 app.patch("/api/tasks/:id", async (req, res) => {
-  const user = await getUserFromToken(req.headers.authorization, req);
+  const user = await getUserFromToken(req.headers.authorization);
   if (!user) {
     res.status(401).json({ error: "Unauthorized" });
     return;
@@ -1373,7 +1361,7 @@ app.patch("/api/tasks/:id", async (req, res) => {
   }
 });
 app.delete("/api/tasks/:id", async (req, res) => {
-  const user = await getUserFromToken(req.headers.authorization, req);
+  const user = await getUserFromToken(req.headers.authorization);
   if (!user) {
     res.status(401).json({ error: "Unauthorized" });
     return;
@@ -1392,7 +1380,7 @@ app.delete("/api/tasks/:id", async (req, res) => {
   res.json({ success: true });
 });
 app.get("/api/logs", async (req, res) => {
-  const user = await getUserFromToken(req.headers.authorization, req);
+  const user = await getUserFromToken(req.headers.authorization);
   if (!user) {
     res.status(401).json({ error: "Unauthorized" });
     return;
@@ -1406,7 +1394,7 @@ app.get("/api/logs", async (req, res) => {
   }
 });
 app.post("/api/logs", async (req, res) => {
-  const user = await getUserFromToken(req.headers.authorization, req);
+  const user = await getUserFromToken(req.headers.authorization);
   if (!user) {
     res.status(401).json({ error: "Unauthorized" });
     return;
@@ -1439,7 +1427,7 @@ app.post("/api/logs", async (req, res) => {
   res.status(201).json(created);
 });
 app.post("/api/logs/clock-out", async (req, res) => {
-  const user = await getUserFromToken(req.headers.authorization, req);
+  const user = await getUserFromToken(req.headers.authorization);
   if (!user) {
     res.status(401).json({ error: "Unauthorized" });
     return;
@@ -1452,7 +1440,8 @@ app.post("/api/logs/clock-out", async (req, res) => {
   }
   const endTime = (/* @__PURE__ */ new Date()).toISOString();
   const diffMs = new Date(endTime).getTime() - new Date(activeLog.startTime).getTime();
-  const durationMinutes = Math.max(1, Math.round(diffMs / 6e4));
+  const minutes = diffMs / 6e4;
+  const durationMinutes = Math.max(0, Math.round(minutes / 60) * 60);
   const updated = await dbAdapter.updateLog(activeLog.id, {
     endTime,
     description: description || activeLog.description || "Completed tracking shift.",
@@ -1461,7 +1450,7 @@ app.post("/api/logs/clock-out", async (req, res) => {
   res.json(updated);
 });
 app.delete("/api/logs/:id", async (req, res) => {
-  const user = await getUserFromToken(req.headers.authorization, req);
+  const user = await getUserFromToken(req.headers.authorization);
   if (!user) {
     res.status(401).json({ error: "Unauthorized" });
     return;
@@ -1480,7 +1469,7 @@ app.delete("/api/logs/:id", async (req, res) => {
   res.json({ success: true });
 });
 app.patch("/api/logs/:id", async (req, res) => {
-  const user = await getUserFromToken(req.headers.authorization, req);
+  const user = await getUserFromToken(req.headers.authorization);
   if (!user || user.role !== "admin") {
     res.status(403).json({ error: "Admin access required" });
     return;
@@ -1499,15 +1488,15 @@ app.patch("/api/logs/:id", async (req, res) => {
   }
 });
 async function syncEnvCredentials() {
-  const adminUsername = portalEnv.devUserName;
-  const adminEmail = portalEnv.devUserEmail;
-  const adminPassword = portalEnv.devUserPassword;
-  const adminName = portalEnv.devUserFullName;
+  const adminUsername = process.env.DEV_USER_NAME || "admin";
+  const adminEmail = process.env.DEV_USER_EMAIL || "admin@example.com";
+  const adminPassword = process.env.DEV_USER_PASSWORD || "admin123";
+  const adminName = process.env.DEV_USER_FULLNAME || "Admin User";
   const incomingHash = hashPassword(adminPassword);
-  const izavaUsername = portalEnv.izaVaUsername;
-  const izavaEmail = portalEnv.izaVaEmail;
-  const izavaName = portalEnv.izaVaName;
-  const izavaPassword = portalEnv.izaVaPassword;
+  const izavaUsername = process.env.IZA_VA_USERNAME || "va_member";
+  const izavaEmail = process.env.IZA_VA_EMAIL || "va_member@example.com";
+  const izavaName = process.env.IZA_VA_NAME || "VA Member";
+  const izavaPassword = process.env.IZA_VA_PASSWORD || "izava123";
   const izavaHash = hashPassword(izavaPassword);
   try {
     const db = readDB();
@@ -1697,10 +1686,10 @@ async function startServer() {
     });
     app.use(vite.middlewares);
   } else {
-    const distPath = path2.join(process.cwd(), "dist");
+    const distPath = path.join(process.cwd(), "dist");
     app.use(express.static(distPath));
     app.get("*", (req, res) => {
-      res.sendFile(path2.join(distPath, "index.html"));
+      res.sendFile(path.join(distPath, "index.html"));
     });
   }
   app.listen(PORT, "0.0.0.0", () => {
