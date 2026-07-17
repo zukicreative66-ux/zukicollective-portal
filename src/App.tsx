@@ -74,6 +74,13 @@ export default function App() {
     checkAuth();
   }, []);
 
+  useEffect(() => {
+    if (!user) return;
+    if (user.role !== 'admin' && activeTab === 'admin') {
+      setActiveTab('dashboard');
+    }
+  }, [user, activeTab]);
+
   // 2. Fetch logs once authenticated
   const fetchLogs = async () => {
     if (!token) return;
