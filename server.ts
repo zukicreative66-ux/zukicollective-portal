@@ -315,12 +315,8 @@ function readDB(): DBStructure {
     if (!db.tasks) db.tasks = [];
     if (!db.users) db.users = [];
 
-    // Filter local db users to ONLY contain those defined in getSeededUsers()
-    const seededUsernames = getSeededUsers().map(u => u.username.toLowerCase().trim());
-    db.users = db.users.filter((u: any) => {
-      const uName = (u.username || "").toLowerCase().trim();
-      return seededUsernames.includes(uName);
-    });
+    // Note: do NOT filter users here — invited/dynamic users must persist across restarts
+    // Seeded users are enforced below via usersToVerify
 
     const adminUsername = (process.env.DEV_USER_NAME || "admin").toLowerCase().trim();
     let migrated = false;
@@ -699,6 +695,45 @@ const dbAdapter = {
     }
     if (updatedUser) return updatedUser;
     throw new Error("User not found");
+  },
+
+  async createUser(user: DBUser): Promise<DBUser> {
+    let created: DBUser | null = null;
+    if (supabase) {
+      const dbUser = await mapUserToDb(user);
+      const { data, error } = await supabase
+        .from("users")
+        .insert([dbUser])
+        .select()
+        .maybeSingle();
+      if (!error && data) {
+        created = mapUserFromDb(data);
+      } else if (error) {
+        console.error("[Supabase Error] createUser:", error);
+      }
+    }
+    const db = readDB();
+    const alreadyExists = db.users.some(u => u.id === user.id || u.email.toLowerCase() === user.email.toLowerCase());
+    if (!alreadyExists) {
+      db.users.push(created || user);
+      writeDB(db);
+    }
+    return created || user;
+  },
+
+  async deleteUser(id: string): Promise<boolean> {
+    if (supabase) {
+      const { error } = await supabase.from("users").delete().eq("id", id);
+      if (error) console.error("[Supabase Error] deleteUser:", error);
+    }
+    const db = readDB();
+    const idx = db.users.findIndex(u => u.id === id);
+    if (idx !== -1) {
+      db.users.splice(idx, 1);
+      writeDB(db);
+      return true;
+    }
+    return false;
   },
 
   async getTasks(userId?: string): Promise<DBTask[]> {
@@ -1268,6 +1303,220 @@ app.post("/api/auth/reset-password", ipRateLimiter(60000, 5, "Too many reset ver
   } catch (error: any) {
     console.error("[ResetPassword Error]:", error);
     res.status(500).json({ error: error.message || "An internal error occurred during password reset." });
+  }
+});
+
+// 2.5 Check username availability (public)
+app.get("/api/auth/check-username", async (req, res) => {
+  const { username } = req.query;
+  if (!username || typeof username !== "string") {
+    res.status(400).json({ error: "username query param is required" });
+    return;
+  }
+  if (!/^[a-zA-Z0-9_]{3,30}$/.test(username)) {
+    res.json({ available: false, reason: "Invalid format" });
+    return;
+  }
+  const existing = await dbAdapter.getUserByUsername(username);
+  res.json({ available: !existing });
+});
+
+// 2.6 Invite a new VA/user (Admin only)
+app.post("/api/auth/invite", async (req, res) => {
+  const adminUser = await getUserFromToken(req.headers.authorization);
+  if (!adminUser || adminUser.role !== "admin") {
+    res.status(403).json({ error: "Admin access required" });
+    return;
+  }
+
+  const { email, name, role = "va", hourlyRate = 200, workType = "part-time",
+          scheduleStart = "09:00", scheduleEnd = "17:00", monthlyHoursCap = 160 } = req.body;
+
+  if (!email || typeof email !== "string" || !email.includes("@")) {
+    res.status(400).json({ error: "A valid email address is required." });
+    return;
+  }
+  if (!name || typeof name !== "string" || name.trim().length === 0) {
+    res.status(400).json({ error: "Full name is required." });
+    return;
+  }
+  if (!["va", "developer", "admin"].includes(role)) {
+    res.status(400).json({ error: "Invalid role. Must be va or developer." });
+    return;
+  }
+
+  const existing = await dbAdapter.getUserByEmailOrUsername(email.trim());
+  if (existing) {
+    res.status(409).json({ error: "A user with this email already exists." });
+    return;
+  }
+
+  const userId = "user-" + crypto.randomBytes(8).toString("hex");
+
+  if (useSupabase && supabase) {
+    try {
+      const portalUrl = process.env.PORTAL_URL
+        || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : null)
+        || "http://localhost:3000";
+      const redirectTo = `${portalUrl}/accept-invite`;
+
+      const { data: inviteData, error: inviteError } = await (supabase.auth as any).admin.inviteUserByEmail(email.trim(), {
+        redirectTo,
+        data: { name: name.trim(), role, portalUserId: userId },
+      });
+
+      if (inviteError) {
+        res.status(500).json({ error: `Supabase invite failed: ${inviteError.message}` });
+        return;
+      }
+
+      // Pre-create pending user record so the accept flow can find it
+      const pendingUser: DBUser = {
+        id: inviteData?.user?.id || userId,
+        username: `pending_${userId.slice(-8)}`,
+        email: email.trim(),
+        passwordHash: "",
+        name: name.trim(),
+        role: role as any,
+        hourlyRate: Number(hourlyRate) || 200,
+        workType: workType as any,
+        scheduleStart: scheduleStart || "09:00",
+        scheduleEnd: scheduleEnd || "17:00",
+        notificationTime: "09:00",
+        photoUrl: "",
+        monthlyHoursCap: Number(monthlyHoursCap) || 160,
+      };
+      await dbAdapter.createUser(pendingUser);
+
+      res.json({
+        success: true,
+        message: `Invite email sent to ${email.trim()}. They will receive a link to set up their account.`,
+      });
+    } catch (err: any) {
+      console.error("[Invite Error]:", err);
+      res.status(500).json({ error: err.message || "Failed to send invite." });
+    }
+  } else {
+    // Local mode: create user with temporary credentials
+    const tempPassword = crypto.randomBytes(5).toString("hex");
+    const baseUsername = email.trim().split("@")[0].replace(/[^a-zA-Z0-9_]/g, "_").slice(0, 20) + "_va";
+    let finalUsername = baseUsername;
+    let counter = 1;
+    while (await dbAdapter.getUserByUsername(finalUsername)) {
+      finalUsername = baseUsername + counter;
+      counter++;
+    }
+
+    const newUser: DBUser = {
+      id: userId,
+      username: finalUsername,
+      email: email.trim(),
+      passwordHash: hashPassword(tempPassword),
+      name: name.trim(),
+      role: role as any,
+      hourlyRate: Number(hourlyRate) || 200,
+      workType: workType as any,
+      scheduleStart: scheduleStart || "09:00",
+      scheduleEnd: scheduleEnd || "17:00",
+      notificationTime: "09:00",
+      photoUrl: "",
+      monthlyHoursCap: Number(monthlyHoursCap) || 160,
+    };
+    await dbAdapter.createUser(newUser);
+
+    res.json({
+      success: true,
+      message: "User created (Supabase not configured — invite email not sent). Share the temporary credentials below.",
+      tempCredentials: { username: finalUsername, password: tempPassword },
+    });
+  }
+});
+
+// 2.7 Accept invite — new user sets their username + password via Supabase invite token
+app.post("/api/auth/accept-invite", async (req, res) => {
+  const { accessToken, username, password } = req.body;
+
+  if (!accessToken || !username || !password) {
+    res.status(400).json({ error: "Access token, username, and password are required." });
+    return;
+  }
+  if (!/^[a-zA-Z0-9_]{3,30}$/.test(username)) {
+    res.status(400).json({ error: "Username must be 3-30 characters: letters, numbers, underscores only." });
+    return;
+  }
+  if (password.length < 6) {
+    res.status(400).json({ error: "Password must be at least 6 characters." });
+    return;
+  }
+
+  if (!useSupabase || !supabase) {
+    res.status(501).json({ error: "Invite acceptance requires Supabase to be configured on the server." });
+    return;
+  }
+
+  try {
+    // Exchange invite token for session
+    const { data: sessionData, error: sessionError } = await supabase.auth.setSession({
+      access_token: accessToken,
+      refresh_token: "",
+    });
+
+    if (sessionError || !sessionData?.user) {
+      res.status(401).json({ error: "Invalid or expired invite link. Please request a new one from the admin." });
+      return;
+    }
+
+    const supabaseUser = sessionData.user;
+    const userEmail = supabaseUser.email!;
+
+    // Check username availability
+    const existingByUsername = await dbAdapter.getUserByUsername(username);
+    if (existingByUsername) {
+      res.status(409).json({ error: "That username is already taken. Please choose another." });
+      return;
+    }
+
+    // Find pre-created pending user entry
+    let user = await dbAdapter.getUserByEmailOrUsername(userEmail);
+
+    if (user) {
+      await dbAdapter.updateUser(user.id, {
+        username,
+        passwordHash: hashPassword(password),
+      });
+      user = { ...user, username, passwordHash: hashPassword(password) };
+    } else {
+      // No pending record — create fresh
+      const newUser: DBUser = {
+        id: supabaseUser.id,
+        username,
+        email: userEmail,
+        passwordHash: hashPassword(password),
+        name: supabaseUser.user_metadata?.name || username,
+        role: (supabaseUser.user_metadata?.role as any) || "va",
+        hourlyRate: 200,
+        workType: "part-time",
+        scheduleStart: "09:00",
+        scheduleEnd: "17:00",
+        notificationTime: "09:00",
+        photoUrl: "",
+        monthlyHoursCap: 160,
+      };
+      await dbAdapter.createUser(newUser);
+      user = newUser;
+    }
+
+    // Sync password into Supabase GoTrue
+    if ((supabase.auth as any).admin) {
+      await (supabase.auth as any).admin.updateUserById(supabaseUser.id, { password });
+    }
+
+    const token = Buffer.from(username).toString("base64");
+    const { passwordHash: _ph, ...cleanUser } = user;
+    res.json({ success: true, token, user: cleanUser });
+  } catch (err: any) {
+    console.error("[Accept Invite Error]:", err);
+    res.status(500).json({ error: err.message || "Failed to complete account setup." });
   }
 });
 

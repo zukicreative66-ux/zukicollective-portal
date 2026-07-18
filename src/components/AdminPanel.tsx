@@ -2,7 +2,8 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { 
   Shield, Users, Search, DollarSign, Clock, FileDown, 
   Edit3, Check, X, AlertCircle, Trash2, Calendar, 
-  Settings, Folder, Kanban, UserCheck, AlertTriangle, Briefcase 
+  Settings, Folder, Kanban, UserCheck, AlertTriangle, Briefcase,
+  UserPlus, Mail, Copy, Eye, EyeOff
 } from 'lucide-react';
 import { User, TimeLog, Task } from '../types';
 
@@ -50,6 +51,55 @@ export default function AdminPanel({ user, logs, onRefreshLogs, token }: AdminPa
   // Export reports state
   const [selectedExportVa, setSelectedExportVa] = useState<User | null>(null);
   const [exportTimeframe, setExportTimeframe] = useState<'today' | 'week' | 'month' | 'all'>('month');
+
+  // Invite form state
+  const [showInviteForm, setShowInviteForm] = useState(false);
+  const [inviteEmail, setInviteEmail] = useState('');
+  const [inviteName, setInviteName] = useState('');
+  const [inviteRole, setInviteRole] = useState<'va' | 'developer'>('va');
+  const [inviteRate, setInviteRate] = useState('200');
+  const [inviteWorkType, setInviteWorkType] = useState<'part-time' | 'full-time'>('part-time');
+  const [inviteStart, setInviteStart] = useState('09:00');
+  const [inviteEnd, setInviteEnd] = useState('17:00');
+  const [inviteCap, setInviteCap] = useState('160');
+  const [inviteLoading, setInviteLoading] = useState(false);
+  const [inviteResult, setInviteResult] = useState<{ message: string; tempCredentials?: { username: string; password: string } } | null>(null);
+  const [showTempPassword, setShowTempPassword] = useState(false);
+
+  const handleSendInvite = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setInviteLoading(true);
+    setErrorMessage('');
+    setInviteResult(null);
+    try {
+      const res = await fetch('/api/auth/invite', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify({
+          email: inviteEmail.trim(),
+          name: inviteName.trim(),
+          role: inviteRole,
+          hourlyRate: parseFloat(inviteRate) || 200,
+          workType: inviteWorkType,
+          scheduleStart: inviteStart,
+          scheduleEnd: inviteEnd,
+          monthlyHoursCap: parseInt(inviteCap) || 160,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Invite failed.');
+      setInviteResult(data);
+      setInviteEmail('');
+      setInviteName('');
+      setShowInviteForm(false);
+      fetchUsers();
+    } catch (err: any) {
+      setErrorMessage(err.message);
+    } finally {
+      setInviteLoading(false);
+    }
+  };
+
 
   const exportToCSV = (va: User, timeframe: 'today' | 'week' | 'month' | 'all') => {
     const vaLogs = logs.filter(l => l.username === va.username);
@@ -983,6 +1033,128 @@ export default function AdminPanel({ user, logs, onRefreshLogs, token }: AdminPa
 
       {adminTab === 'users' && (
         <div className="space-y-6">
+
+          {/* Invite New VA */}
+          <div className="bg-brand-brown-card p-6 rounded-3xl border border-brand-peach/10 shadow-lg space-y-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="font-serif font-bold text-brand-peach text-lg tracking-wide flex items-center gap-2">
+                  <UserPlus size={18} /> Invite New Team Member
+                </h2>
+                <p className="text-xs text-brand-cream/60 mt-0.5">Send a Supabase email invite to onboard a new VA. They'll choose their own username and password via the invite link.</p>
+              </div>
+              <button
+                onClick={() => { setShowInviteForm(!showInviteForm); setInviteResult(null); setErrorMessage(''); }}
+                className={`px-4 py-2 rounded-xl text-xs font-semibold border transition-all cursor-pointer flex items-center gap-1.5 ${
+                  showInviteForm
+                    ? 'bg-brand-brown border-brand-peach/20 text-brand-cream/60 hover:text-brand-cream'
+                    : 'bg-brand-peach/10 border-brand-peach/20 text-brand-peach hover:bg-brand-peach/20'
+                }`}
+              >
+                {showInviteForm ? <><X size={13} /> Cancel</> : <><Mail size={13} /> Send Invite</>}
+              </button>
+            </div>
+
+            {/* Invite result banner */}
+            {inviteResult && (
+              <div className="p-4 bg-emerald-500/10 border border-emerald-500/20 rounded-2xl space-y-2">
+                <p className="text-sm text-emerald-300 font-medium flex items-center gap-2">
+                  <Check size={15} className="shrink-0" /> {inviteResult.message}
+                </p>
+                {inviteResult.tempCredentials && (
+                  <div className="bg-brand-brown/40 border border-brand-peach/15 rounded-xl p-3 space-y-2 font-mono text-xs">
+                    <p className="text-brand-peach/60 uppercase tracking-widest text-[9px] font-bold">Temporary Credentials</p>
+                    <div className="flex items-center justify-between">
+                      <span className="text-brand-cream/70">Username:</span>
+                      <span className="text-brand-peach font-bold">{inviteResult.tempCredentials.username}</span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-brand-cream/70">Password:</span>
+                      <div className="flex items-center gap-2">
+                        <span className="text-brand-peach font-bold">
+                          {showTempPassword ? inviteResult.tempCredentials.password : '••••••••••'}
+                        </span>
+                        <button onClick={() => setShowTempPassword(!showTempPassword)} className="text-brand-peach/40 hover:text-brand-peach transition-colors cursor-pointer">
+                          {showTempPassword ? <EyeOff size={12} /> : <Eye size={12} />}
+                        </button>
+                        <button
+                          onClick={() => { navigator.clipboard.writeText(inviteResult!.tempCredentials!.password); }}
+                          className="text-brand-peach/40 hover:text-brand-peach transition-colors cursor-pointer"
+                          title="Copy password"
+                        >
+                          <Copy size={12} />
+                        </button>
+                      </div>
+                    </div>
+                    <p className="text-[9px] text-brand-cream/30 mt-1">Share these securely. The VA should change their password after first login.</p>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {showInviteForm && (
+              <form onSubmit={handleSendInvite} className="space-y-4 pt-2 border-t border-brand-peach/10">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-[9px] font-mono font-bold uppercase tracking-widest text-brand-peach/50 mb-1.5">Email Address *</label>
+                    <input type="email" required value={inviteEmail} onChange={e => setInviteEmail(e.target.value)}
+                      placeholder="va@example.com"
+                      className="w-full px-3 py-2 bg-brand-brown/40 border border-brand-peach/15 rounded-xl text-sm text-brand-cream placeholder:text-brand-peach/25 focus:outline-none focus:ring-1 focus:ring-brand-peach/20 focus:border-brand-peach/40 font-mono" />
+                  </div>
+                  <div>
+                    <label className="block text-[9px] font-mono font-bold uppercase tracking-widest text-brand-peach/50 mb-1.5">Full Name *</label>
+                    <input type="text" required value={inviteName} onChange={e => setInviteName(e.target.value)}
+                      placeholder="Jane Santos"
+                      className="w-full px-3 py-2 bg-brand-brown/40 border border-brand-peach/15 rounded-xl text-sm text-brand-cream placeholder:text-brand-peach/25 focus:outline-none focus:ring-1 focus:ring-brand-peach/20 focus:border-brand-peach/40" />
+                  </div>
+                  <div>
+                    <label className="block text-[9px] font-mono font-bold uppercase tracking-widest text-brand-peach/50 mb-1.5">Role</label>
+                    <select value={inviteRole} onChange={e => setInviteRole(e.target.value as any)}
+                      className="w-full px-3 py-2 bg-brand-brown/40 border border-brand-peach/15 rounded-xl text-sm text-brand-cream focus:outline-none focus:ring-1 focus:ring-brand-peach/20 cursor-pointer">
+                      <option value="va">Virtual Assistant (VA)</option>
+                      <option value="developer">Developer</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-[9px] font-mono font-bold uppercase tracking-widest text-brand-peach/50 mb-1.5">Work Type</label>
+                    <select value={inviteWorkType} onChange={e => setInviteWorkType(e.target.value as any)}
+                      className="w-full px-3 py-2 bg-brand-brown/40 border border-brand-peach/15 rounded-xl text-sm text-brand-cream focus:outline-none focus:ring-1 focus:ring-brand-peach/20 cursor-pointer">
+                      <option value="part-time">Part-Time</option>
+                      <option value="full-time">Full-Time</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-[9px] font-mono font-bold uppercase tracking-widest text-brand-peach/50 mb-1.5">Hourly Rate (₱)</label>
+                    <input type="number" min="0" value={inviteRate} onChange={e => setInviteRate(e.target.value)}
+                      className="w-full px-3 py-2 bg-brand-brown/40 border border-brand-peach/15 rounded-xl text-sm text-brand-cream font-mono focus:outline-none focus:ring-1 focus:ring-brand-peach/20 focus:border-brand-peach/40" />
+                  </div>
+                  <div>
+                    <label className="block text-[9px] font-mono font-bold uppercase tracking-widest text-brand-peach/50 mb-1.5">Monthly Hours Cap</label>
+                    <input type="number" min="1" value={inviteCap} onChange={e => setInviteCap(e.target.value)}
+                      className="w-full px-3 py-2 bg-brand-brown/40 border border-brand-peach/15 rounded-xl text-sm text-brand-cream font-mono focus:outline-none focus:ring-1 focus:ring-brand-peach/20 focus:border-brand-peach/40" />
+                  </div>
+                  <div>
+                    <label className="block text-[9px] font-mono font-bold uppercase tracking-widest text-brand-peach/50 mb-1.5">Shift Start</label>
+                    <input type="text" value={inviteStart} onChange={e => setInviteStart(e.target.value)} placeholder="09:00"
+                      className="w-full px-3 py-2 bg-brand-brown/40 border border-brand-peach/15 rounded-xl text-sm text-brand-cream font-mono focus:outline-none focus:ring-1 focus:ring-brand-peach/20 focus:border-brand-peach/40" />
+                  </div>
+                  <div>
+                    <label className="block text-[9px] font-mono font-bold uppercase tracking-widest text-brand-peach/50 mb-1.5">Shift End</label>
+                    <input type="text" value={inviteEnd} onChange={e => setInviteEnd(e.target.value)} placeholder="17:00"
+                      className="w-full px-3 py-2 bg-brand-brown/40 border border-brand-peach/15 rounded-xl text-sm text-brand-cream font-mono focus:outline-none focus:ring-1 focus:ring-brand-peach/20 focus:border-brand-peach/40" />
+                  </div>
+                </div>
+                <div className="flex justify-end">
+                  <button type="submit" disabled={inviteLoading}
+                    className="px-6 py-2.5 bg-brand-peach hover:bg-brand-peach-hover disabled:opacity-50 text-brand-brown font-bold text-sm rounded-xl transition-all flex items-center gap-2 cursor-pointer shadow-lg shadow-brand-peach/10">
+                    <Mail size={14} />
+                    {inviteLoading ? 'Sending invite…' : 'Send Invite Email'}
+                  </button>
+                </div>
+              </form>
+            )}
+          </div>
+
           {/* VA Shift Hours & Earnings Summary Table/Record */}
           <div className="bg-brand-brown-card p-6 rounded-3xl border border-brand-peach/10 shadow-lg space-y-4">
             <div>

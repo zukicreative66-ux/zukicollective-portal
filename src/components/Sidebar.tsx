@@ -11,17 +11,13 @@ interface SidebarProps {
 }
 
 export default function Sidebar({ user, activeTab, setActiveTab, onLogout }: SidebarProps) {
-  const menuItems = user.role === 'admin'
+  const menuItems = (user.role === 'admin' || user.role === 'developer')
     ? [{ id: 'admin', label: 'Admin Panel', icon: ShieldAlert }]
     : [
         { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
         { id: 'tracker', label: 'Time Tracker', icon: Clock },
         { id: 'settings', label: 'Settings', icon: Settings },
       ];
-
-  if (user.role === 'admin') {
-    menuItems.push({ id: 'admin', label: 'Admin Panel', icon: ShieldAlert });
-  }
 
   return (
     <aside className="w-64 bg-brand-brown-card text-brand-cream flex flex-col border-r border-brand-peach/10 h-screen sticky top-0">

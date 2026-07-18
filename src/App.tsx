@@ -5,6 +5,7 @@ import DashboardView from './components/DashboardView';
 import TimeTrackerView from './components/TimeTrackerView';
 import SettingsView from './components/SettingsView';
 import AdminPanel from './components/AdminPanel';
+import AcceptInviteView from './components/AcceptInviteView';
 import { Shield, Clock, Key, AlertCircle, Mail, Lock, HelpCircle, ArrowLeft, CheckCircle2 } from 'lucide-react';
 import { logoZuki } from './utils/assets';
 
@@ -13,9 +14,21 @@ export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [logs, setLogs] = useState<TimeLog[]>([]);
   const [activeTab, setActiveTab] = useState('dashboard');
-  
+
+  // Detect Supabase invite acceptance redirect (type=invite in URL hash)
+  const [inviteToken] = useState<string>(() => {
+    const hash = window.location.hash.substring(1);
+    const params = new URLSearchParams(hash);
+    if (params.get('type') === 'invite') {
+      return params.get('access_token') || '';
+    }
+    return '';
+  });
+
+  const isAdminRole = (role?: string) => role === 'admin' || role === 'developer';
+
   const handleSetActiveTab = (tab: string) => {
-    if (user?.role === 'admin') {
+    if (isAdminRole(user?.role)) {
       setActiveTab('admin');
       return;
     }
@@ -26,7 +39,7 @@ export default function App() {
     setActiveTab(tab);
   };
 
-  const effectiveTab = user?.role === 'admin'
+  const effectiveTab = isAdminRole(user?.role)
     ? 'admin'
     : activeTab === 'admin'
       ? 'dashboard'
@@ -76,7 +89,8 @@ export default function App() {
           const userData = result.user ?? result;
           setUser(userData);
           setToken(storedToken);
-          setActiveTab(userData.role === 'admin' ? 'admin' : 'dashboard');
+          const isAdminUser = userData.role === 'admin' || userData.role === 'developer';
+          setActiveTab(isAdminUser ? 'admin' : 'dashboard');
         } else {
           // Token expired or invalid
           localStorage.removeItem('itp_token');
@@ -94,14 +108,15 @@ export default function App() {
 
   useEffect(() => {
     if (!user) return;
-    if (user.role === 'admin') {
+    const isAdminUser = user.role === 'admin' || user.role === 'developer';
+    if (isAdminUser) {
       setActiveTab('admin');
       return;
     }
     if (activeTab === 'admin') {
       setActiveTab('dashboard');
     }
-  }, [user, activeTab]);
+  }, [user]);  // intentionally only run when user changes, not activeTab
 
   // 2. Fetch logs once authenticated
   const fetchLogs = async () => {
@@ -157,7 +172,8 @@ export default function App() {
       localStorage.setItem('itp_token', data.token);
       setToken(data.token);
       setUser(data.user);
-      setActiveTab(data.user.role === 'admin' ? 'admin' : 'dashboard');
+      const loginIsAdmin = data.user.role === 'admin' || data.user.role === 'developer';
+      setActiveTab(loginIsAdmin ? 'admin' : 'dashboard');
     } catch (err: any) {
       setLoginError(err.message || 'Server connection failed.');
     } finally {
@@ -532,6 +548,21 @@ export default function App() {
     );
   }
 
+  // Invite acceptance page — shown when Supabase sends the user to /accept-invite
+  if (inviteToken) {
+    return (
+      <AcceptInviteView
+        accessToken={inviteToken}
+        onInviteAccepted={(userData, newToken) => {
+          setUser(userData);
+          setToken(newToken);
+          const isAdminUser = userData.role === 'admin' || userData.role === 'developer';
+          setActiveTab(isAdminUser ? 'admin' : 'dashboard');
+        }}
+      />
+    );
+  }
+
   // Logged-In Layout
   return (
     <div className="min-h-screen bg-brand-brown flex font-sans text-brand-cream">
@@ -545,14 +576,14 @@ export default function App() {
 
       {/* Main View Area */}
       <main className="flex-1 p-8 overflow-y-auto max-w-7xl mx-auto w-full">
-        {user.role !== 'admin' && effectiveTab === 'dashboard' && (
+        {user.role === 'va' && effectiveTab === 'dashboard' && (
           <DashboardView 
             user={user} 
             logs={logs} 
             onNavigateToTracker={() => handleSetActiveTab('tracker')} 
           />
         )}
-        {user.role !== 'admin' && effectiveTab === 'tracker' && (
+        {user.role === 'va' && effectiveTab === 'tracker' && (
           <TimeTrackerView 
             user={user} 
             logs={logs} 
@@ -560,10 +591,10 @@ export default function App() {
             token={token} 
           />
         )}
-        {user.role !== 'admin' && effectiveTab === 'settings' && (
+        {user.role === 'va' && effectiveTab === 'settings' && (
           <SettingsView user={user} onUserUpdate={(updatedUser) => setUser(updatedUser)} token={token} />
         )}
-        {effectiveTab === 'admin' && user.role === 'admin' && (
+        {effectiveTab === 'admin' && (user.role === 'admin' || user.role === 'developer') && (
           <AdminPanel 
             user={user} 
             logs={logs} 
