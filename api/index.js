@@ -1201,7 +1201,7 @@ app.get("/api/auth/check-username", async (req, res) => {
 });
 app.post("/api/auth/invite", async (req, res) => {
   const adminUser = await getUserFromToken(req.headers.authorization);
-  if (!adminUser || adminUser.role !== "admin") {
+  if (!adminUser || adminUser.role !== "admin" && adminUser.role !== "developer") {
     res.status(403).json({ error: "Admin access required" });
     return;
   }
