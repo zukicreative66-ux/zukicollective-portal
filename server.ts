@@ -595,21 +595,12 @@ const dbAdapter = {
       const db = readDB();
       allUsers = db.users;
     }
-    return allUsers.filter(u => {
-      const uname = (u.username || "").toLowerCase().trim();
-      return uname === adminUsername || uname === izavaUsername;
-    });
+    return allUsers;
   },
 
   async getUserByUsername(username: string): Promise<DBUser | null> {
     const cleanUsername = sanitizePostgrestString(username).toLowerCase().trim();
     if (!cleanUsername) return null;
-
-    const adminUsername = (process.env.DEV_USER_NAME || "admin").toLowerCase().trim();
-    const izavaUsername = (process.env.IZA_VA_USERNAME || "va_member").toLowerCase().trim();
-    if (cleanUsername !== adminUsername && cleanUsername !== izavaUsername) {
-      return null;
-    }
 
     if (supabase) {
       const { data, error } = await supabase
@@ -643,12 +634,7 @@ const dbAdapter = {
     }
 
      if (user) {
-      const adminUsername = (process.env.DEV_USER_NAME || "admin").toLowerCase().trim();
-      const izavaUsername = (process.env.IZA_VA_USERNAME || "va_member").toLowerCase().trim();
-      const uname = (user.username || "").toLowerCase().trim();
-      if (uname === adminUsername || uname === izavaUsername) {
-        return user;
-      }
+      return user;
     }
     return null;
   },
@@ -656,22 +642,6 @@ const dbAdapter = {
   async getUserByEmailOrUsername(searchStr: string): Promise<DBUser | null> {
     const cleanSearch = sanitizePostgrestString(searchStr.toLowerCase()).trim();
     if (!cleanSearch) return null;
-
-    const adminUsername = (process.env.DEV_USER_NAME || "admin").toLowerCase().trim();
-    const adminEmail = (process.env.DEV_USER_EMAIL || "admin@example.com").toLowerCase().trim();
-    const izavaUsername = (process.env.IZA_VA_USERNAME || "va_member").toLowerCase().trim();
-    const izavaEmail = (process.env.IZA_VA_EMAIL || "va_member@example.com").toLowerCase().trim();
-
-    // Check if the search matches allowed users
-    const isSearchAllowed = 
-      cleanSearch === adminUsername || 
-      cleanSearch === adminEmail || 
-      cleanSearch === izavaUsername || 
-      cleanSearch === izavaEmail;
-
-    if (!isSearchAllowed) {
-      return null;
-    }
 
     if (supabase) {
       const { data, error } = await supabase
@@ -1011,7 +981,7 @@ app.post("/api/auth/login", ipRateLimiter(60000, 10, "Too many login attempts fr
       return;
     }
 
-    const user = await dbAdapter.getUserByUsername(username);
+    const user = await dbAdapter.getUserByEmailOrUsername(username);
     if (!user) {
       res.status(401).json({ error: "Invalid username or password" });
       return;
@@ -1626,7 +1596,7 @@ app.post("/api/logs/clock-out", async (req, res) => {
   const endTime = new Date().toISOString();
   const diffMs = new Date(endTime).getTime() - new Date(activeLog.startTime).getTime();
   const minutes = diffMs / 60000;
-  const durationMinutes = Math.max(0, Math.round(minutes / 60) * 60);
+  const durationMinutes = Math.max(0, Math.round(minutes));
 
   const updated = await dbAdapter.updateLog(activeLog.id, {
     endTime,

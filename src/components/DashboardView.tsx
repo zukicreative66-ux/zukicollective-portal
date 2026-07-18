@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { Clock, TrendingUp, Award, Calendar, ChevronRight, AlertTriangle, ShieldCheck } from 'lucide-react';
 import { User, TimeLog } from '../types';
 import { coverZuki } from '../utils/assets';
@@ -10,56 +10,82 @@ interface DashboardViewProps {
 }
 
 export default function DashboardView({ user, logs, onNavigateToTracker }: DashboardViewProps) {
-  // Filter logs for this user (or show all for admin)
-  const myLogs = user.role === 'admin' ? logs : logs.filter(l => l.userId === user.id);
-  
-  const totalMinutes = myLogs.reduce((sum, log) => sum + (log.durationMinutes || 0), 0);
-  const totalHours = (totalMinutes / 60).toFixed(1);
-  const totalEarningsVal = parseFloat(totalHours) * user.hourlyRate;
-  const totalEarnings = "₱" + totalEarningsVal.toLocaleString('en-US', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2
-  });
-  
-  const completedLogsCount = myLogs.filter(l => l.endTime).length;
-  const activeTimer = myLogs.find(l => !l.endTime);
+  const myLogs = useMemo(
+    () => (user.role === 'admin' ? logs : logs.filter(l => l.userId === user.id)),
+    [logs, user.role, user.id]
+  );
 
-  // Calculate current calendar month logged hours for Capping
-  const now = new Date();
-  const currentMonth = now.getMonth();
-  const currentYear = now.getFullYear();
-  const thisMonthLogs = myLogs.filter(log => {
-    const logDate = new Date(log.startTime);
-    return logDate.getMonth() === currentMonth && logDate.getFullYear() === currentYear;
-  });
-  const monthlyMinutes = thisMonthLogs.reduce((sum, log) => sum + (log.durationMinutes || 0), 0);
-  const monthlyHours = parseFloat((monthlyMinutes / 60).toFixed(1));
-  const monthlyHoursCap = user.monthlyHoursCap || 160;
-  const remainingHours = Math.max(0, parseFloat((monthlyHoursCap - monthlyHours).toFixed(1)));
-  const capPercent = Math.min(100, Math.round((monthlyHours / monthlyHoursCap) * 100));
+  const {
+    totalHours,
+    totalEarnings,
+    completedLogsCount,
+    activeTimer,
+    monthlyHours,
+    monthlyHoursCap,
+    remainingHours,
+    capPercent,
+    last7Days,
+    maxMinutes,
+  } = useMemo(() => {
+    const totalMinutes = myLogs.reduce((sum, log) => sum + (log.durationMinutes || 0), 0);
+    const totalHoursValue = parseFloat((totalMinutes / 60).toFixed(1));
+    const totalEarningsVal = totalHoursValue * user.hourlyRate;
+    const totalEarningsFormatted = '₱' + totalEarningsVal.toLocaleString('en-US', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    });
 
-  // Calculate stats for the last 7 days
-  const last7Days = Array.from({ length: 7 }, (_, i) => {
-    const d = new Date();
-    d.setDate(d.getDate() - i);
-    return {
-      dateStr: d.toLocaleDateString('en-US', { weekday: 'short' }),
-      dateRaw: d.toISOString().split('T')[0],
-      minutes: 0,
-    };
-  }).reverse();
+    const completedLogsCountValue = myLogs.filter(l => l.endTime).length;
+    const activeTimerValue = myLogs.find(l => !l.endTime);
 
-  myLogs.forEach(log => {
-    if (log.endTime) {
-      const logDate = log.startTime.split('T')[0];
-      const match = last7Days.find(day => day.dateRaw === logDate);
-      if (match) {
-        match.minutes += log.durationMinutes;
+    const now = new Date();
+    const currentMonth = now.getMonth();
+    const currentYear = now.getFullYear();
+    const thisMonthLogs = myLogs.filter(log => {
+      const logDate = new Date(log.startTime);
+      return logDate.getMonth() === currentMonth && logDate.getFullYear() === currentYear;
+    });
+    const monthlyMinutes = thisMonthLogs.reduce((sum, log) => sum + (log.durationMinutes || 0), 0);
+    const monthlyHoursValue = parseFloat((monthlyMinutes / 60).toFixed(1));
+    const monthlyHoursCapValue = user.monthlyHoursCap || 160;
+    const remainingHoursValue = Math.max(0, parseFloat((monthlyHoursCapValue - monthlyHoursValue).toFixed(1)));
+    const capPercentValue = Math.min(100, Math.round((monthlyHoursValue / monthlyHoursCapValue) * 100));
+
+    const last7DaysArray = Array.from({ length: 7 }, (_, i) => {
+      const d = new Date();
+      d.setDate(d.getDate() - i);
+      return {
+        dateStr: d.toLocaleDateString('en-US', { weekday: 'short' }),
+        dateRaw: d.toISOString().split('T')[0],
+        minutes: 0,
+      };
+    }).reverse();
+
+    myLogs.forEach(log => {
+      if (log.endTime) {
+        const logDate = log.startTime.split('T')[0];
+        const match = last7DaysArray.find(day => day.dateRaw === logDate);
+        if (match) {
+          match.minutes += log.durationMinutes || 0;
+        }
       }
-    }
-  });
+    });
 
-  const maxMinutes = Math.max(...last7Days.map(d => d.minutes), 60); // min ceiling is 1 hour
+    const maxMinutesValue = Math.max(...last7DaysArray.map(d => d.minutes), 60);
+
+    return {
+      totalHours: totalHoursValue.toFixed(1),
+      totalEarnings: totalEarningsFormatted,
+      completedLogsCount: completedLogsCountValue,
+      activeTimer: activeTimerValue,
+      monthlyHours: monthlyHoursValue,
+      monthlyHoursCap: monthlyHoursCapValue,
+      remainingHours: remainingHoursValue,
+      capPercent: capPercentValue,
+      last7Days: last7DaysArray,
+      maxMinutes: maxMinutesValue,
+    };
+  }, [myLogs, user.hourlyRate, user.monthlyHoursCap]);
 
   return (
     <div className="space-y-8 animate-fade-in text-brand-cream">

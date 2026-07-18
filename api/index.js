@@ -109,6 +109,7 @@ function getSeededUsers() {
       workType: "full-time",
       scheduleStart: "09:00",
       scheduleEnd: "17:00",
+      notificationTime: "09:00",
       photoUrl: "",
       monthlyHoursCap: 160
     },
@@ -119,10 +120,11 @@ function getSeededUsers() {
       passwordHash: hashPassword(izavaPassword),
       name: izavaName,
       role: "va",
-      hourlyRate: 150,
+      hourlyRate: 200,
       workType: "full-time",
       scheduleStart: "09:00",
       scheduleEnd: "17:00",
+      notificationTime: "09:00",
       photoUrl: "",
       monthlyHoursCap: 50
       // Capped at 50 hours as per requirements
@@ -140,6 +142,7 @@ function getSeededUsers() {
       workType: "part-time",
       scheduleStart: "08:00",
       scheduleEnd: "16:00",
+      notificationTime: "09:00",
       photoUrl: "",
       monthlyHoursCap: 50
       // Capped at 50 hours as per requirements
@@ -397,6 +400,7 @@ function mapUserFromDb(row) {
     workType: row.workType ?? row.work_type ?? row.worktype ?? "full-time",
     scheduleStart: row.scheduleStart ?? row.schedule_start ?? row.schedulestart ?? "09:00",
     scheduleEnd: row.scheduleEnd ?? row.schedule_end ?? row.scheduleend ?? "17:00",
+    notificationTime: row.notificationTime ?? row.notification_time ?? row.notificationtime ?? "09:00",
     photoUrl: row.photoUrl ?? row.photo_url ?? row.photourl ?? "",
     monthlyHoursCap: Number(row.monthlyHoursCap ?? row.monthly_hours_cap ?? row.monthlyhourscap ?? 160)
   };
@@ -454,6 +458,10 @@ async function mapUserToDb(user) {
       mapped.schedule_end = user.scheduleEnd;
       delete mapped.scheduleEnd;
     }
+    if (user.notificationTime !== void 0) {
+      mapped.notification_time = user.notificationTime;
+      delete mapped.notificationTime;
+    }
     if (user.photoUrl !== void 0) {
       mapped.photo_url = user.photoUrl;
       delete mapped.photoUrl;
@@ -482,6 +490,10 @@ async function mapUserToDb(user) {
     if (user.scheduleEnd !== void 0) {
       mapped.scheduleend = user.scheduleEnd;
       delete mapped.scheduleEnd;
+    }
+    if (user.notificationTime !== void 0) {
+      mapped.notificationtime = user.notificationTime;
+      delete mapped.notificationTime;
     }
     if (user.photoUrl !== void 0) {
       mapped.photourl = user.photoUrl;
@@ -595,19 +607,11 @@ var dbAdapter = {
       const db = readDB();
       allUsers = db.users;
     }
-    return allUsers.filter((u) => {
-      const uname = (u.username || "").toLowerCase().trim();
-      return uname === adminUsername || uname === izavaUsername;
-    });
+    return allUsers;
   },
   async getUserByUsername(username) {
     const cleanUsername = sanitizePostgrestString(username).toLowerCase().trim();
     if (!cleanUsername) return null;
-    const adminUsername = (process.env.DEV_USER_NAME || "admin").toLowerCase().trim();
-    const izavaUsername = (process.env.IZA_VA_USERNAME || "va_member").toLowerCase().trim();
-    if (cleanUsername !== adminUsername && cleanUsername !== izavaUsername) {
-      return null;
-    }
     if (supabase) {
       const { data, error } = await supabase.from("users").select("*").ilike("username", cleanUsername);
       if (!error && data && data.length > 0) {
@@ -631,26 +635,13 @@ var dbAdapter = {
       user = db.users.find((u) => u.id === id) || null;
     }
     if (user) {
-      const adminUsername = (process.env.DEV_USER_NAME || "admin").toLowerCase().trim();
-      const izavaUsername = (process.env.IZA_VA_USERNAME || "va_member").toLowerCase().trim();
-      const uname = (user.username || "").toLowerCase().trim();
-      if (uname === adminUsername || uname === izavaUsername) {
-        return user;
-      }
+      return user;
     }
     return null;
   },
   async getUserByEmailOrUsername(searchStr) {
     const cleanSearch = sanitizePostgrestString(searchStr.toLowerCase()).trim();
     if (!cleanSearch) return null;
-    const adminUsername = (process.env.DEV_USER_NAME || "admin").toLowerCase().trim();
-    const adminEmail = (process.env.DEV_USER_EMAIL || "admin@example.com").toLowerCase().trim();
-    const izavaUsername = (process.env.IZA_VA_USERNAME || "va_member").toLowerCase().trim();
-    const izavaEmail = (process.env.IZA_VA_EMAIL || "va_member@example.com").toLowerCase().trim();
-    const isSearchAllowed = cleanSearch === adminUsername || cleanSearch === adminEmail || cleanSearch === izavaUsername || cleanSearch === izavaEmail;
-    if (!isSearchAllowed) {
-      return null;
-    }
     if (supabase) {
       const { data, error } = await supabase.from("users").select("*").or(`username.ilike.${cleanSearch},email.ilike.${cleanSearch}`).maybeSingle();
       if (!error && data) return mapUserFromDb(data);
@@ -919,7 +910,7 @@ app.post("/api/auth/login", ipRateLimiter(6e4, 10, "Too many login attempts from
       res.status(429).json({ error: `This account is temporarily locked due to too many failed login attempts. Please try again in ${remainingMin} minute(s).` });
       return;
     }
-    const user = await dbAdapter.getUserByUsername(username);
+    const user = await dbAdapter.getUserByEmailOrUsername(username);
     if (!user) {
       res.status(401).json({ error: "Invalid username or password" });
       return;
@@ -1004,6 +995,7 @@ app.post("/api/auth/login", ipRateLimiter(6e4, 10, "Too many login attempts from
         workType: user.workType,
         scheduleStart: user.scheduleStart,
         scheduleEnd: user.scheduleEnd,
+        notificationTime: user.notificationTime,
         monthlyHoursCap: user.monthlyHoursCap,
         photoUrl: user.photoUrl
       },
@@ -1030,6 +1022,7 @@ app.get("/api/auth/me", async (req, res) => {
     workType: user.workType,
     scheduleStart: user.scheduleStart,
     scheduleEnd: user.scheduleEnd,
+    notificationTime: user.notificationTime,
     monthlyHoursCap: user.monthlyHoursCap,
     photoUrl: user.photoUrl
   });
@@ -1211,17 +1204,18 @@ app.patch("/api/users/:id", async (req, res) => {
     res.status(403).json({ error: "Admin access required" });
     return;
   }
-  const { name, workType, scheduleStart, scheduleEnd, monthlyHoursCap, hourlyRate } = req.body;
+  const { name, workType, scheduleStart, scheduleEnd, notificationTime, monthlyHoursCap, hourlyRate } = req.body;
   const updates = {};
   if (name !== void 0) updates.name = name;
   if (workType !== void 0) {
     updates.workType = workType;
     if (hourlyRate === void 0) {
-      updates.hourlyRate = workType === "part-time" ? 200 : 150;
+      updates.hourlyRate = 200;
     }
   }
   if (scheduleStart !== void 0) updates.scheduleStart = scheduleStart;
   if (scheduleEnd !== void 0) updates.scheduleEnd = scheduleEnd;
+  if (notificationTime !== void 0) updates.notificationTime = notificationTime;
   if (monthlyHoursCap !== void 0) updates.monthlyHoursCap = Number(monthlyHoursCap);
   if (hourlyRate !== void 0) updates.hourlyRate = Number(hourlyRate);
   try {
@@ -1441,7 +1435,7 @@ app.post("/api/logs/clock-out", async (req, res) => {
   const endTime = (/* @__PURE__ */ new Date()).toISOString();
   const diffMs = new Date(endTime).getTime() - new Date(activeLog.startTime).getTime();
   const minutes = diffMs / 6e4;
-  const durationMinutes = Math.max(0, Math.round(minutes / 60) * 60);
+  const durationMinutes = Math.max(0, Math.round(minutes));
   const updated = await dbAdapter.updateLog(activeLog.id, {
     endTime,
     description: description || activeLog.description || "Completed tracking shift.",
@@ -1523,6 +1517,7 @@ async function syncEnvCredentials() {
         workType: "full-time",
         scheduleStart: "09:00",
         scheduleEnd: "17:00",
+        notificationTime: "09:00",
         photoUrl: "",
         monthlyHoursCap: 160
       };
@@ -1548,10 +1543,11 @@ async function syncEnvCredentials() {
         passwordHash: izavaHash,
         name: izavaName,
         role: "va",
-        hourlyRate: 150,
+        hourlyRate: 200,
         workType: "full-time",
         scheduleStart: "09:00",
         scheduleEnd: "17:00",
+        notificationTime: "09:00",
         photoUrl: "",
         monthlyHoursCap: 160
       };
@@ -1601,6 +1597,7 @@ async function syncEnvCredentials() {
           workType: "full-time",
           scheduleStart: "09:00",
           scheduleEnd: "17:00",
+          notificationTime: "09:00",
           photoUrl: "",
           monthlyHoursCap: 160
         };
@@ -1650,10 +1647,11 @@ async function syncEnvCredentials() {
           passwordHash: izavaHash,
           name: izavaName,
           role: "va",
-          hourlyRate: 150,
+          hourlyRate: 200,
           workType: "full-time",
           scheduleStart: "09:00",
           scheduleEnd: "17:00",
+          notificationTime: "09:00",
           photoUrl: "",
           monthlyHoursCap: 160
         };

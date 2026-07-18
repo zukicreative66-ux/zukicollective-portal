@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { 
   Shield, Users, Search, DollarSign, Clock, FileDown, 
   Edit3, Check, X, AlertCircle, Trash2, Calendar, 
@@ -475,27 +475,26 @@ export default function AdminPanel({ user, logs, onRefreshLogs, token }: AdminPa
   };
 
   useEffect(() => {
+    if (!token) return;
     fetchUsers();
     fetchTasks();
-  }, [token, logs]); // refresh when logs sync or tab loads
+  }, [token]);
 
   // Calculate team wide metrics
-  const totalMinutes = logs.reduce((sum, l) => sum + (l.durationMinutes || 0), 0);
-  const totalHours = (totalMinutes / 60).toFixed(1);
+  const totalMinutes = useMemo(() => logs.reduce((sum, l) => sum + (l.durationMinutes || 0), 0), [logs]);
+  const totalHours = useMemo(() => (totalMinutes / 60).toFixed(1), [totalMinutes]);
 
-  // Dynamic cost calculation based on actual rate in logs, or lookup usersList hourlyRate!
-  const totalCost = logs.reduce((sum, l) => {
+  const totalCost = useMemo(() => logs.reduce((sum, l) => {
     const matchedUser = usersList.find(u => u.username === l.username);
     const rate = matchedUser ? matchedUser.hourlyRate : (l.role === 'admin' ? 75 : 200);
     const hours = (l.durationMinutes || 0) / 60;
     return sum + (hours * rate);
-  }, 0);
+  }, 0), [logs, usersList]);
 
-  const activeWorkers = logs.filter(l => !l.endTime);
-  const uniqueUsernames = Array.from(new Set(logs.map(l => l.username)));
+  const activeWorkers = useMemo(() => logs.filter(l => !l.endTime), [logs]);
+  const uniqueUsernames = useMemo(() => Array.from(new Set(logs.map(l => l.username))), [logs]);
 
-  // Filter logs list
-  const filteredLogs = logs.filter(log => {
+  const filteredLogs = useMemo(() => logs.filter(log => {
     if (filterUser !== 'all' && log.username !== filterUser) return false;
     if (filterType !== 'all') {
       if (filterType === 'manual' && !log.isManual) return false;
@@ -503,7 +502,7 @@ export default function AdminPanel({ user, logs, onRefreshLogs, token }: AdminPa
       if (filterType === 'active' && log.endTime) return false;
     }
     return true;
-  });
+  }), [logs, filterUser, filterType]);
 
   // Export to CSV Utility (PESOS)
   const handleExportCSV = () => {

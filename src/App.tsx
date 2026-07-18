@@ -14,6 +14,24 @@ export default function App() {
   const [logs, setLogs] = useState<TimeLog[]>([]);
   const [activeTab, setActiveTab] = useState('dashboard');
   
+  const handleSetActiveTab = (tab: string) => {
+    if (user?.role === 'admin') {
+      setActiveTab('admin');
+      return;
+    }
+    if (tab === 'admin') {
+      setActiveTab('dashboard');
+      return;
+    }
+    setActiveTab(tab);
+  };
+
+  const effectiveTab = user?.role === 'admin'
+    ? 'admin'
+    : activeTab === 'admin'
+      ? 'dashboard'
+      : activeTab;
+  
   // Login states
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -83,7 +101,7 @@ export default function App() {
     if (activeTab === 'admin') {
       setActiveTab('dashboard');
     }
-  }, [user]);
+  }, [user, activeTab]);
 
   // 2. Fetch logs once authenticated
   const fetchLogs = async () => {
@@ -520,21 +538,21 @@ export default function App() {
       {/* Sidebar Navigation */}
       <Sidebar 
         user={user} 
-        activeTab={activeTab} 
-        setActiveTab={setActiveTab} 
+        activeTab={effectiveTab} 
+        setActiveTab={handleSetActiveTab} 
         onLogout={handleLogout} 
       />
 
       {/* Main View Area */}
       <main className="flex-1 p-8 overflow-y-auto max-w-7xl mx-auto w-full">
-        {activeTab === 'dashboard' && (
+        {user.role !== 'admin' && effectiveTab === 'dashboard' && (
           <DashboardView 
             user={user} 
             logs={logs} 
-            onNavigateToTracker={() => setActiveTab('tracker')} 
+            onNavigateToTracker={() => handleSetActiveTab('tracker')} 
           />
         )}
-        {activeTab === 'tracker' && (
+        {user.role !== 'admin' && effectiveTab === 'tracker' && (
           <TimeTrackerView 
             user={user} 
             logs={logs} 
@@ -542,10 +560,10 @@ export default function App() {
             token={token} 
           />
         )}
-        {activeTab === 'settings' && (
+        {user.role !== 'admin' && effectiveTab === 'settings' && (
           <SettingsView user={user} onUserUpdate={(updatedUser) => setUser(updatedUser)} token={token} />
         )}
-        {activeTab === 'admin' && user.role === 'admin' && (
+        {effectiveTab === 'admin' && user.role === 'admin' && (
           <AdminPanel 
             user={user} 
             logs={logs} 

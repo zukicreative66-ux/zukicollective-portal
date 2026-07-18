@@ -11,11 +11,13 @@ interface SidebarProps {
 }
 
 export default function Sidebar({ user, activeTab, setActiveTab, onLogout }: SidebarProps) {
-  const menuItems = [
-    ...(user.role === 'admin' ? [] : [{ id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard }]),
-    { id: 'tracker', label: 'Time Tracker', icon: Clock },
-    { id: 'settings', label: 'Settings', icon: Settings },
-  ];
+  const menuItems = user.role === 'admin'
+    ? [{ id: 'admin', label: 'Admin Panel', icon: ShieldAlert }]
+    : [
+        { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
+        { id: 'tracker', label: 'Time Tracker', icon: Clock },
+        { id: 'settings', label: 'Settings', icon: Settings },
+      ];
 
   if (user.role === 'admin') {
     menuItems.push({ id: 'admin', label: 'Admin Panel', icon: ShieldAlert });

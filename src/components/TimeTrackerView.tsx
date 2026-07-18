@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { Clock, Play, Square, AlertCircle, FileText, CheckCircle2, Trash2, Plus, Kanban, ArrowRight } from 'lucide-react';
 import { User, TimeLog } from '../types';
 import ProjectTracker from './ProjectTracker';
@@ -11,7 +11,6 @@ interface TimeTrackerViewProps {
 }
 
 export default function TimeTrackerView({ user, logs, onRefreshLogs, token }: TimeTrackerViewProps) {
-  const [activeLog, setActiveLog] = useState<TimeLog | null>(null);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [description, setDescription] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -30,13 +29,16 @@ export default function TimeTrackerView({ user, logs, onRefreshLogs, token }: Ti
 
   const timerRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Sync active log from parent logs list
-  useEffect(() => {
-    const active = logs.find((l) => l.userId === user.id && !l.endTime);
-    setActiveLog(active || null);
-  }, [logs, user.id]);
+  const activeLog = useMemo(
+    () => logs.find((l) => l.userId === user.id && !l.endTime) || null,
+    [logs, user.id]
+  );
 
-  // Handle active timer stopwatch ticks
+  const userLogs = useMemo(
+    () => logs.filter((l) => l.userId === user.id),
+    [logs, user.id]
+  );
+
   useEffect(() => {
     if (activeLog) {
       const calculateElapsed = () => {
@@ -71,7 +73,7 @@ export default function TimeTrackerView({ user, logs, onRefreshLogs, token }: Ti
   };
 
   // 1. Clock In Action
-  const handleClockIn = async () => {
+  const handleClockIn = useCallback(async () => {
     setIsSubmitting(true);
     setErrorMessage('');
     setSuccessMessage('');
@@ -101,10 +103,10 @@ export default function TimeTrackerView({ user, logs, onRefreshLogs, token }: Ti
     } finally {
       setIsSubmitting(false);
     }
-  };
+  }, [token, onRefreshLogs]);
 
   // 2. Clock Out Action
-  const handleClockOut = async (e: React.FormEvent) => {
+  const handleClockOut = useCallback(async (e: React.FormEvent) => {
     e.preventDefault();
     if (!description.trim()) {
       setErrorMessage('Please describe the work/tasks completed during this shift before clocking out.');
@@ -137,10 +139,10 @@ export default function TimeTrackerView({ user, logs, onRefreshLogs, token }: Ti
     } finally {
       setIsSubmitting(false);
     }
-  };
+  }, [description, token, onRefreshLogs]);
 
   // 3. Submit Manual Log Action
-  const handleManualSubmit = async (e: React.FormEvent) => {
+  const handleManualSubmit = useCallback(async (e: React.FormEvent) => {
     e.preventDefault();
     const hours = parseInt(manualHours) || 0;
     const mins = parseInt(manualMinutes) || 0;
@@ -159,8 +161,7 @@ export default function TimeTrackerView({ user, logs, onRefreshLogs, token }: Ti
     setErrorMessage('');
     setSuccessMessage('');
     try {
-      // Calculate start time backwards from arbitrary simulated end time
-      const end = new Date(manualDate + 'T17:00:00'); // defaults to 5PM on that day
+      const end = new Date(manualDate + 'T17:00:00');
       const start = new Date(end.getTime() - totalMins * 60000);
 
       const response = await fetch('/api/logs', {
@@ -194,10 +195,10 @@ export default function TimeTrackerView({ user, logs, onRefreshLogs, token }: Ti
     } finally {
       setIsSubmitting(false);
     }
-  };
+  }, [manualDate, manualDescription, manualHours, manualMinutes, token, onRefreshLogs]);
 
   // 4. Delete Log Action
-  const handleDeleteLog = async (logId: string) => {
+  const handleDeleteLog = useCallback(async (logId: string) => {
     if (!confirm('Are you sure you want to delete this time log record?')) return;
     try {
       const response = await fetch(`/api/logs/${logId}`, {
@@ -215,34 +216,22 @@ export default function TimeTrackerView({ user, logs, onRefreshLogs, token }: Ti
     } catch (err: any) {
       setErrorMessage(err.message);
     }
-  };
+  }, [token, onRefreshLogs]);
 
-  // Filter logs for list
-  const userLogs = logs.filter((l) => l.userId === user.id);
-
-  // Real-time lateness calculation
-  const checkIfLate = () => {
+  const isLate = useMemo(() => {
     if (!user.scheduleStart || user.role === 'admin') return false;
-    
-    // Check if there is already a log started or finished today
+
     const todayStr = new Date().toISOString().split('T')[0];
     const loggedToday = userLogs.some(log => log.startTime.startsWith(todayStr));
     if (loggedToday) return false;
 
-    // Compare current hours and minutes with scheduled start
     const [schedHour, schedMin] = user.scheduleStart.split(':').map(Number);
     const now = new Date();
-    const currHour = now.getHours();
-    const currMin = now.getMinutes();
-
     const schedMinutes = schedHour * 60 + schedMin;
-    const currMinutes = currHour * 60 + currMin;
+    const currMinutes = now.getHours() * 60 + now.getMinutes();
 
-    // Grace period of 5 minutes: if current local time is past scheduled start time and no active log exists
     return currMinutes > schedMinutes + 5;
-  };
-
-  const isLate = checkIfLate();
+  }, [user.scheduleStart, user.role, userLogs]);
 
   return (
     <div className="space-y-8 animate-fade-in text-brand-cream">
