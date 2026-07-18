@@ -87,18 +87,36 @@ export default function App() {
         if (response.ok) {
           const result = await response.json();
           const userData = result.user ?? result;
-          setUser(userData);
-          setToken(storedToken);
-          const isAdminUser = userData.role === 'admin' || userData.role === 'developer';
-          setActiveTab(isAdminUser ? 'admin' : 'dashboard');
+          
+          // CRITICAL: Only set user after we've confirmed the role exists
+          // This prevents the race condition where UI renders before role is available
+          if (userData && userData.role) {
+            setUser(userData);
+            setToken(storedToken);
+            const isAdminUser = userData.role === 'admin' || userData.role === 'developer';
+            setActiveTab(isAdminUser ? 'admin' : 'dashboard');
+          } else {
+            // User data incomplete - treat as invalid session
+            console.warn('User data missing role information');
+            localStorage.removeItem('itp_token');
+            setToken(null);
+            setUser(null);
+          }
         } else {
           // Token expired or invalid
           localStorage.removeItem('itp_token');
           setToken(null);
+          setUser(null);
         }
       } catch (err) {
         console.error('Error verifying existing token:', err);
+        // On error, ensure clean state
+        localStorage.removeItem('itp_token');
+        setToken(null);
+        setUser(null);
       } finally {
+        // CRITICAL: Only set loading to false after user state is fully set
+        // This ensures the loading screen stays visible until auth is complete
         setIsCheckingAuth(false);
       }
     };
@@ -169,6 +187,12 @@ export default function App() {
       }
 
       const data = await response.json();
+      
+      // Validate that user data includes role before proceeding
+      if (!data.user || !data.user.role) {
+        throw new Error('Invalid user data received from server');
+      }
+      
       localStorage.setItem('itp_token', data.token);
       setToken(data.token);
       setUser(data.user);
@@ -560,6 +584,19 @@ export default function App() {
           setActiveTab(isAdminUser ? 'admin' : 'dashboard');
         }}
       />
+    );
+  }
+
+  // CRITICAL: Prevent rendering dashboard until user role is confirmed
+  // This prevents race condition where user object exists but role is undefined
+  if (!user.role) {
+    return (
+      <div className="h-screen w-screen bg-brand-brown flex flex-col items-center justify-center font-sans">
+        <div className="h-14 w-14 rounded-2xl bg-brand-brown-card border border-brand-peach/20 flex items-center justify-center text-brand-peach font-serif italic font-bold text-2xl animate-pulse shadow-2xl">
+          Z
+        </div>
+        <p className="text-xs text-brand-peach/60 font-mono mt-4 tracking-wider uppercase">Loading User Permissions...</p>
+      </div>
     );
   }
 
