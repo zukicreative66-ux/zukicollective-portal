@@ -1,0 +1,93 @@
+{
+  "users": [
+    {
+      "id": "user-admin",
+      "username": "zuki_dev",
+      "email": "zukicreative66@gmail.com",
+      "passwordHash": "c9850b80b1e4a8a77fd6ea8c05537bff65eedc1c327124dceefa40a21f7d5c64",
+      "name": "Zuki Creatives",
+      "role": "admin",
+      "hourlyRate": 250,
+      "workType": "full-time",
+      "scheduleStart": "09:00",
+      "scheduleEnd": "17:00",
+      "notificationTime": "08:45",
+      "photoUrl": "",
+      "monthlyHoursCap": 160
+    },
+    {
+      "id": "user-izava",
+      "username": "iza_va",
+      "email": "zuki8020@example.com",
+      "passwordHash": "76c5211a33fc419370155eb549fcb5db406291ff7e566794f4e699f9aa048b00",
+      "name": "Iza VA",
+      "role": "va",
+      "hourlyRate": 200,
+      "workType": "full-time",
+      "scheduleStart": "09:00",
+      "scheduleEnd": "17:00",
+      "photoUrl": "",
+      "monthlyHoursCap": 160
+    },
+    {
+      "id": "user-admin",
+      "username": "admin",
+      "email": "admin@example.com",
+      "passwordHash": "240be518fabd2724ddb6f04eeb1da5967448d7e831c08c8fa822809f74c720a9",
+      "name": "Admin User",
+      "role": "admin",
+      "hourlyRate": 250,
+      "workType": "full-time",
+      "scheduleStart": "09:00",
+      "scheduleEnd": "17:00",
+      "notificationTime": "09:00",
+      "photoUrl": "",
+      "monthlyHoursCap": 160
+    },
+    {
+      "id": "user-izava",
+      "username": "va_member",
+      "email": "va_member@example.com",
+      "passwordHash": "f35619a3b45169acb6dd21d57fe14449198571ce667d1d8f154077de51b2c442",
+      "name": "VA Member",
+      "role": "va",
+      "hourlyRate": 200,
+      "workType": "full-time",
+      "scheduleStart": "09:00",
+      "scheduleEnd": "17:00",
+      "notificationTime": "09:00",
+      "photoUrl": "",
+      "monthlyHoursCap": 50
+    },
+    {
+      "id": "user-va2",
+      "username": "va_member2",
+      "email": "va_member2@example.com",
+      "passwordHash": "b76c112994a09028d59a0bfbf3b97083a2f13c360ead8b0e8c989030d39680e0",
+      "name": "VA Member Two",
+      "role": "va",
+      "hourlyRate": 200,
+      "workType": "part-time",
+      "scheduleStart": "08:00",
+      "scheduleEnd": "16:00",
+      "notificationTime": "09:00",
+      "photoUrl": "",
+      "monthlyHoursCap": 50
+    }
+  ],
+  "logs": [
+    {
+      "id": "log-3",
+      "userId": "user-admin",
+      "username": "admin",
+      "name": "Admin User",
+      "role": "admin",
+      "startTime": "2026-06-24T00:59:57.779Z",
+      "endTime": "2026-06-24T03:59:57.779Z",
+      "description": "Fixed CORS issues, configured system environment variables, and optimized Docker container ingress pipelines.",
+      "isManual": false,
+      "durationMinutes": 180
+    }
+  ],
+  "tasks": []
+}

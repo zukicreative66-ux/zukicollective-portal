@@ -4,6 +4,10 @@ import fs from "fs";
 import crypto from "crypto";
 import nodemailer from "nodemailer";
 import { createClient } from "@supabase/supabase-js";
+import dotenv from "dotenv";
+
+// Load environment variables from .env file
+dotenv.config();
 
 const app = express();
 const PORT = 3000;
@@ -652,17 +656,38 @@ const dbAdapter = {
   },
 
   async updateUser(id: string, updates: Partial<DBUser>): Promise<DBUser> {
+    console.log(`[DB Adapter] updateUser called for ID: ${id} with updates:`, Object.keys(updates));
     let updatedUser: DBUser | null = null;
+    
     if (supabase) {
       const dbUpdates = await mapUserToDb(updates);
-      const { data, error } = await supabase
+      console.log(`[DB Adapter] Updating Supabase with:`, dbUpdates);
+      
+      // Try update with all fields first
+      let { data, error } = await supabase
         .from("users")
         .update(dbUpdates)
         .eq("id", id)
         .select()
         .maybeSingle();
+        
+      // If notification_time column doesn't exist, retry without it
+      if (error && error.code === 'PGRST204' && error.message.includes('notification_time')) {
+        console.log(`[DB Adapter] notification_time column not found in Supabase, retrying without it`);
+        const { notification_time, notificationtime, ...dbUpdatesWithoutNotif } = dbUpdates;
+        const retry = await supabase
+          .from("users")
+          .update(dbUpdatesWithoutNotif)
+          .eq("id", id)
+          .select()
+          .maybeSingle();
+        data = retry.data;
+        error = retry.error;
+      }
+      
       if (!error && data) {
         updatedUser = mapUserFromDb(data);
+        console.log(`[DB Adapter] Supabase update success for user: ${updatedUser.username}`);
         if (updates.name) {
           const logCasing = await detectLogCasing();
           const updateObj = { name: updates.name };
@@ -673,16 +698,24 @@ const dbAdapter = {
         console.error("[Supabase Error] updateUser fallback:", error);
       }
     }
+    
+    // Always update local DB
     const db = readDB();
     let idx = db.users.findIndex(u => u.id === id);
+    console.log(`[DB Adapter] Found user at index ${idx} in local DB`);
+    
     if (idx === -1) {
       const resolvedUser = await dbAdapter.getUserById(id);
       if (resolvedUser) {
         idx = db.users.findIndex(u => u.username.toLowerCase().trim() === resolvedUser.username.toLowerCase().trim());
+        console.log(`[DB Adapter] Resolved user by username, new index: ${idx}`);
       }
     }
+    
     if (idx !== -1) {
       db.users[idx] = { ...db.users[idx], ...updates };
+      console.log(`[DB Adapter] Updated local user: ${db.users[idx].username}`);
+      
       if (updates.name) {
         db.logs.forEach(log => {
           if (log.userId === id || (idx !== -1 && log.userId === db.users[idx].id)) {
@@ -690,10 +723,18 @@ const dbAdapter = {
           }
         });
       }
+      
       writeDB(db);
+      console.log(`[DB Adapter] Local DB written successfully`);
       return updatedUser || db.users[idx];
     }
-    if (updatedUser) return updatedUser;
+    
+    if (updatedUser) {
+      console.log(`[DB Adapter] Returning Supabase-only update result`);
+      return updatedUser;
+    }
+    
+    console.error(`[DB Adapter] User ${id} not found in any database`);
     throw new Error("User not found");
   },
 
@@ -722,18 +763,30 @@ const dbAdapter = {
   },
 
   async deleteUser(id: string): Promise<boolean> {
+    let deletedFromSupabase = false;
     if (supabase) {
       const { error } = await supabase.from("users").delete().eq("id", id);
-      if (error) console.error("[Supabase Error] deleteUser:", error);
+      if (error) {
+        console.error("[Supabase Error] deleteUser:", error);
+      } else {
+        deletedFromSupabase = true;
+        console.log(`[Supabase] User ${id} deleted from Supabase`);
+      }
     }
+    
+    // Always attempt local deletion regardless of Supabase success
     const db = readDB();
     const idx = db.users.findIndex(u => u.id === id);
     if (idx !== -1) {
+      const deletedUser = db.users[idx];
       db.users.splice(idx, 1);
       writeDB(db);
+      console.log(`[Local DB] User ${deletedUser.username} (${id}) deleted from local database`);
       return true;
     }
-    return false;
+    
+    console.log(`[Local DB] User ${id} not found in local database`);
+    return deletedFromSupabase; // Return true if at least Supabase deletion worked
   },
 
   async getTasks(userId?: string): Promise<DBTask[]> {
@@ -973,12 +1026,16 @@ const loginAttempts = new Map<string, { count: number; lockUntil: number }>();
 
 // Token validation middleware
 async function getUserFromToken(authHeader?: string) {
-  if (!authHeader || !authHeader.startsWith("Bearer ")) return null;
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    console.log(`[getUserFromToken] No valid auth header provided`);
+    return null;
+  }
   const token = authHeader.split(" ")[1];
   try {
     if (useSupabase && supabase) {
       const { data: { user: authUser }, error } = await supabase.auth.getUser(token);
       if (error || !authUser) {
+        console.log(`[getUserFromToken] Supabase auth failed, falling back to legacy token. Error:`, error);
         // Fallback to legacy base64 token if Supabase verification fails
         try {
           const username = Buffer.from(token, "base64").toString("utf8");
@@ -987,12 +1044,20 @@ async function getUserFromToken(authHeader?: string) {
           return null;
         }
       }
-      return await dbAdapter.getUserByEmailOrUsername(authUser.email!);
+      console.log(`[getUserFromToken] Supabase auth success! User email: ${authUser.email}, ID: ${authUser.id}`);
+      const dbUser = await dbAdapter.getUserByEmailOrUsername(authUser.email!);
+      if (!dbUser) {
+        console.log(`[getUserFromToken] PROBLEM: User ${authUser.email} authenticated in Supabase but NOT FOUND in database!`);
+      } else {
+        console.log(`[getUserFromToken] Found user in DB: ${dbUser.username} (Role: ${dbUser.role})`);
+      }
+      return dbUser;
     } else {
       const username = Buffer.from(token, "base64").toString("utf8");
       return await dbAdapter.getUserByUsername(username);
     }
   } catch (e) {
+    console.log(`[getUserFromToken] Exception:`, e);
     return null;
   }
 }
@@ -1001,6 +1066,8 @@ async function getUserFromToken(authHeader?: string) {
 app.post("/api/auth/login", ipRateLimiter(60000, 10, "Too many login attempts from this IP. Please try again in 1 minute."), async (req, res) => {
   try {
     const { username, password } = req.body;
+    console.log(`[Login] Attempt for username: ${username}`);
+    
     if (!username || !password) {
       res.status(400).json({ error: "Username and password are required" });
       return;
@@ -1018,9 +1085,12 @@ app.post("/api/auth/login", ipRateLimiter(60000, 10, "Too many login attempts fr
 
     const user = await dbAdapter.getUserByEmailOrUsername(username);
     if (!user) {
+      console.log(`[Login] FAILED: User not found for username: ${username}`);
       res.status(401).json({ error: "Invalid username or password" });
       return;
     }
+    
+    console.log(`[Login] Found user: ${user.username} (ID: ${user.id}, Role: ${user.role}, Email: ${user.email})`);
 
     let token = "";
     let loginSuccess = false;
@@ -1103,6 +1173,8 @@ app.post("/api/auth/login", ipRateLimiter(60000, 10, "Too many login attempts fr
     // Login success: reset failed login attempts
     loginAttempts.delete(cleanUsername);
 
+    console.log(`[Login] SUCCESS: User ${user.username} logged in with role: ${user.role}`);
+    
     res.json({
       user: {
         id: user.id,
@@ -1323,59 +1395,100 @@ app.get("/api/auth/check-username", async (req, res) => {
 
 // 2.6 Invite a new VA/user (Admin only)
 app.post("/api/auth/invite", async (req, res) => {
+  console.log(`[Invite] Received invite request`);
+  
   const adminUser = await getUserFromToken(req.headers.authorization);
   if (!adminUser || (adminUser.role !== "admin" && adminUser.role !== "developer")) {
+    console.log(`[Invite] BLOCKED: Unauthorized access attempt`);
     res.status(403).json({ error: "Admin access required" });
     return;
   }
 
+  console.log(`[Invite] Admin user verified: ${adminUser.username}`);
+
   const { email, name, role = "va", hourlyRate = 200, workType = "part-time",
           scheduleStart = "09:00", scheduleEnd = "17:00", monthlyHoursCap = 160 } = req.body;
 
+  console.log(`[Invite] Request data - Email: ${email}, Name: ${name}, Role: ${role}`);
+
   if (!email || typeof email !== "string" || !email.includes("@")) {
+    console.log(`[Invite] BLOCKED: Invalid email format`);
     res.status(400).json({ error: "A valid email address is required." });
     return;
   }
   if (!name || typeof name !== "string" || name.trim().length === 0) {
+    console.log(`[Invite] BLOCKED: Name is required`);
     res.status(400).json({ error: "Full name is required." });
     return;
   }
   if (!["va", "developer", "admin"].includes(role)) {
+    console.log(`[Invite] BLOCKED: Invalid role: ${role}`);
     res.status(400).json({ error: "Invalid role. Must be va or developer." });
     return;
   }
 
+  console.log(`[Invite] Checking for existing user with email: ${email.trim()}`);
   const existing = await dbAdapter.getUserByEmailOrUsername(email.trim());
   if (existing) {
-    res.status(409).json({ error: "A user with this email already exists." });
+    console.log(`[Invite] BLOCKED: User already exists - ${existing.name} (@${existing.username})`);
+    res.status(409).json({ 
+      error: `A user with this email already exists: ${existing.name} (@${existing.username}). Please delete this user first if you want to re-invite them.`,
+      existingUser: {
+        id: existing.id,
+        name: existing.name,
+        username: existing.username,
+        email: existing.email
+      }
+    });
     return;
   }
 
+  console.log(`[Invite] No existing user found. Proceeding with invite.`);
   const userId = "user-" + crypto.randomBytes(8).toString("hex");
+  console.log(`[Invite] Generated user ID: ${userId}`);
+  console.log(`[Invite] Mode check - useSupabase: ${useSupabase}, supabase available: ${!!supabase}`);
 
   if (useSupabase && supabase) {
+    console.log(`[Invite] Using Supabase mode - creating user directly with temporary password`);
     try {
-      const portalUrl = process.env.PORTAL_URL
-        || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : null)
-        || "http://localhost:3000";
-      const redirectTo = `${portalUrl}/accept-invite`;
+      // Generate temporary password and username
+      const tempPassword = crypto.randomBytes(8).toString("hex"); // 16 character password
+      const baseUsername = email.trim().split("@")[0].replace(/[^a-zA-Z0-9_]/g, "_").slice(0, 20) + "_va";
+      let finalUsername = baseUsername;
+      let counter = 1;
+      while (await dbAdapter.getUserByUsername(finalUsername)) {
+        finalUsername = baseUsername + counter;
+        counter++;
+      }
 
-      const { data: inviteData, error: inviteError } = await (supabase.auth as any).admin.inviteUserByEmail(email.trim(), {
-        redirectTo,
-        data: { name: name.trim(), role, portalUserId: userId },
+      console.log(`[Invite] Generated username: ${finalUsername}, Creating user in Supabase Auth...`);
+      
+      // Create user directly in Supabase Auth with temporary password
+      const { data: authData, error: authError } = await supabase.auth.admin.createUser({
+        email: email.trim(),
+        password: tempPassword,
+        email_confirm: true, // Auto-confirm email so they can login immediately
+        user_metadata: {
+          name: name.trim(),
+          role,
+          username: finalUsername
+        }
       });
 
-      if (inviteError) {
-        res.status(500).json({ error: `Supabase invite failed: ${inviteError.message}` });
+      console.log(`[Invite] Supabase Auth createUser response - Data:`, authData?.user?.id, `Error:`, authError);
+
+      if (authError) {
+        console.error(`[Invite] Supabase user creation error:`, authError);
+        res.status(500).json({ error: `Failed to create user in Supabase: ${authError.message}` });
         return;
       }
 
-      // Pre-create pending user record so the accept flow can find it
-      const pendingUser: DBUser = {
-        id: inviteData?.user?.id || userId,
-        username: `pending_${userId.slice(-8)}`,
+      // Create user in database
+      const newUser: DBUser = {
+        id: authData?.user?.id || userId,
+        username: finalUsername,
         email: email.trim(),
-        passwordHash: "",
+        passwordHash: hashPassword(tempPassword), // Store hashed password for local auth fallback
         name: name.trim(),
         role: role as any,
         hourlyRate: Number(hourlyRate) || 200,
@@ -1386,17 +1499,32 @@ app.post("/api/auth/invite", async (req, res) => {
         photoUrl: "",
         monthlyHoursCap: Number(monthlyHoursCap) || 160,
       };
-      await dbAdapter.createUser(pendingUser);
+      await dbAdapter.createUser(newUser);
 
+      console.log(`[Invite] User created successfully in both Auth and Database.`);
       res.json({
         success: true,
-        message: `Invite email sent to ${email.trim()}. They will receive a link to set up their account.`,
+        message: `User created successfully! Share these temporary login credentials with ${name.trim()}.`,
+        tempCredentials: { 
+          username: finalUsername, 
+          email: email.trim(),
+          password: tempPassword 
+        },
+        user: {
+          id: newUser.id,
+          name: newUser.name,
+          username: newUser.username,
+          email: newUser.email,
+          role: newUser.role
+        }
       });
     } catch (err: any) {
-      console.error("[Invite Error]:", err);
-      res.status(500).json({ error: err.message || "Failed to send invite." });
+      console.error("[Invite Error] Exception caught:", err);
+      console.error("[Invite Error] Stack trace:", err.stack);
+      res.status(500).json({ error: err.message || "Failed to create user." });
     }
   } else {
+    console.log(`[Invite] Using local mode (Supabase not configured)`);
     // Local mode: create user with temporary credentials
     const tempPassword = crypto.randomBytes(5).toString("hex");
     const baseUsername = email.trim().split("@")[0].replace(/[^a-zA-Z0-9_]/g, "_").slice(0, 20) + "_va";
@@ -1406,6 +1534,8 @@ app.post("/api/auth/invite", async (req, res) => {
       finalUsername = baseUsername + counter;
       counter++;
     }
+
+    console.log(`[Invite] Created local user with username: ${finalUsername}`);
 
     const newUser: DBUser = {
       id: userId,
@@ -1523,12 +1653,15 @@ app.post("/api/auth/accept-invite", async (req, res) => {
 // 2.1 Get users (Admin only)
 app.get("/api/users", async (req, res) => {
   const user = await getUserFromToken(req.headers.authorization);
-  if (!user || user.role !== "admin") {
+  if (!user || (user.role !== "admin" && user.role !== "developer")) {
+    console.log(`[Get Users] BLOCKED: Unauthorized access attempt by ${user?.username || 'unknown'} (role: ${user?.role || 'none'})`);
     res.status(403).json({ error: "Admin access required" });
     return;
   }
+  console.log(`[Get Users] Request by admin: ${user.username}`);
   const users = await dbAdapter.getUsers();
   const cleanUsers = users.map(({ passwordHash, ...u }) => u);
+  console.log(`[Get Users] Returning ${cleanUsers.length} users`);
   res.json(cleanUsers);
 });
 
@@ -1575,7 +1708,12 @@ app.patch("/api/users/:id", async (req, res) => {
     res.status(403).json({ error: "Admin access required" });
     return;
   }
+  
+  const userId = req.params.id;
   const { name, workType, scheduleStart, scheduleEnd, notificationTime, monthlyHoursCap, hourlyRate } = req.body;
+  
+  console.log(`[Update User] Request to update user ID: ${userId}`);
+  console.log(`[Update User] Updates:`, { name, workType, scheduleStart, scheduleEnd, notificationTime, monthlyHoursCap, hourlyRate });
   
   const updates: Partial<DBUser> = {};
   if (name !== undefined) updates.name = name;
@@ -1592,11 +1730,66 @@ app.patch("/api/users/:id", async (req, res) => {
   if (hourlyRate !== undefined) updates.hourlyRate = Number(hourlyRate);
   
   try {
-    const updatedUser = await dbAdapter.updateUser(req.params.id, updates);
+    console.log(`[Update User] Calling dbAdapter.updateUser with:`, updates);
+    const updatedUser = await dbAdapter.updateUser(userId, updates);
+    console.log(`[Update User] SUCCESS: User updated:`, updatedUser.username);
     const { passwordHash, ...cleanUser } = updatedUser;
     res.json(cleanUser);
   } catch (err: any) {
+    console.error(`[Update User] ERROR:`, err);
     res.status(404).json({ error: err.message });
+  }
+});
+
+// 2.3 Delete User (Admin only)
+app.delete("/api/users/:id", async (req, res) => {
+  const adminUser = await getUserFromToken(req.headers.authorization);
+  if (!adminUser || (adminUser.role !== "admin" && adminUser.role !== "developer")) {
+    res.status(403).json({ error: "Admin access required" });
+    return;
+  }
+
+  const userId = req.params.id;
+  console.log(`[Delete User] Request to delete user ID: ${userId} by admin: ${adminUser.username}`);
+
+  // Prevent admin from deleting themselves
+  if (userId === adminUser.id) {
+    console.log(`[Delete User] BLOCKED: Admin attempted to delete their own account`);
+    res.status(400).json({ error: "Cannot delete your own account" });
+    return;
+  }
+
+  // Check if user exists
+  const users = await dbAdapter.getUsers();
+  const userToDelete = users.find(u => u.id === userId);
+  
+  if (!userToDelete) {
+    console.log(`[Delete User] ERROR: User ${userId} not found`);
+    res.status(404).json({ error: "User not found" });
+    return;
+  }
+
+  // Optionally, you can prevent deletion of other admin accounts
+  if (userToDelete.role === "admin" && adminUser.role !== "admin") {
+    console.log(`[Delete User] BLOCKED: Cannot delete admin user ${userToDelete.username}`);
+    res.status(403).json({ error: "Cannot delete admin accounts" });
+    return;
+  }
+
+  try {
+    console.log(`[Delete User] Attempting to delete user: ${userToDelete.username} (${userId})`);
+    const deleted = await dbAdapter.deleteUser(userId);
+    
+    if (deleted) {
+      console.log(`[Delete User] SUCCESS: User ${userToDelete.name} deleted successfully`);
+      res.json({ success: true, message: `User ${userToDelete.name} has been deleted successfully` });
+    } else {
+      console.log(`[Delete User] WARNING: Delete returned false for user ${userId}`);
+      res.status(500).json({ error: "Failed to delete user from database" });
+    }
+  } catch (err: any) {
+    console.error(`[Delete User] EXCEPTION:`, err);
+    res.status(500).json({ error: err.message || "Failed to delete user" });
   }
 });
 
@@ -2046,13 +2239,25 @@ async function syncEnvCredentials() {
           monthlyHoursCap: 160,
         };
         const dbInsert = await mapUserToDb(newAdmin);
-        await supabase.from("users").insert([dbInsert]);
+        console.log(`[Credentials Sync] Inserting admin into database...`);
+        const { data: insertData, error: insertError } = await supabase.from("users").insert([dbInsert]).select();
+        if (insertError) {
+          console.error(`[Credentials Sync] FAILED to insert admin into database:`, insertError);
+        } else {
+          console.log(`[Credentials Sync] Admin user inserted successfully:`, insertData);
+        }
         if (supabase.auth.admin) {
-          await supabase.auth.admin.createUser({
+          console.log(`[Credentials Sync] Creating admin in Supabase Auth...`);
+          const { data: authData, error: authError } = await supabase.auth.admin.createUser({
             email: adminEmail,
             password: adminPassword,
             email_confirm: true,
           });
+          if (authError) {
+            console.error(`[Credentials Sync] FAILED to create admin in Auth:`, authError);
+          } else {
+            console.log(`[Credentials Sync] Admin created in Auth successfully. ID: ${authData.user?.id}`);
+          }
         }
       }
 
