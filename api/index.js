@@ -557,6 +557,21 @@ async function mapTaskToDb(task) {
 function sanitizePostgrestString(val) {
   return val.replace(/[(),'"]/g, "").trim();
 }
+async function findSupabaseAuthUserIdsByEmail(email) {
+  if (!supabase?.auth?.admin) return [];
+  const cleanEmail = email.toLowerCase().trim();
+  if (!cleanEmail) return [];
+  const { data, error } = await supabase.auth.admin.listUsers({ page: 1, perPage: 200 });
+  if (error || !data?.users) {
+    console.error("[Supabase Auth] listUsers failed while resolving email:", error);
+    return [];
+  }
+  return data.users.filter((candidate) => (candidate.email || "").toLowerCase().trim() === cleanEmail).map((candidate) => candidate.id).filter(Boolean);
+}
+async function supabaseAuthUserExistsByEmail(email) {
+  const matchedIds = await findSupabaseAuthUserIdsByEmail(email);
+  return matchedIds.length > 0;
+}
 var dbAdapter = {
   async getUsers() {
     const adminUsername = (process.env.DEV_USER_NAME || "admin").toLowerCase().trim();
@@ -1052,33 +1067,38 @@ app.post("/api/auth/login", ipRateLimiter(6e4, 10, "Too many login attempts from
         token = authData.session.access_token;
         loginSuccess = true;
       } else {
-        const passwordMatches = verifyPassword(password, user.passwordHash);
-        if (passwordMatches) {
-          console.log(`[Supabase Auth] Migrating existing user ${user.username} with email ${user.email} to GoTrue Auth...`);
-          if (supabase.auth.admin) {
-            const { data: newUser, error: createError } = await supabase.auth.admin.createUser({
-              email: user.email,
-              password,
-              email_confirm: true
-            });
-            if (!createError) {
-              const { data: retryData, error: retryError } = await supabase.auth.signInWithPassword({
+        const authAccountExists = await supabaseAuthUserExistsByEmail(user.email);
+        if (authAccountExists) {
+          console.log(`[Supabase Auth] Existing auth account found for ${user.email}; refusing local fallback after password failure.`);
+        } else {
+          const passwordMatches = verifyPassword(password, user.passwordHash);
+          if (passwordMatches) {
+            console.log(`[Supabase Auth] Migrating existing user ${user.username} with email ${user.email} to GoTrue Auth...`);
+            if (supabase.auth.admin) {
+              const { data: newUser, error: createError } = await supabase.auth.admin.createUser({
                 email: user.email,
-                password
+                password,
+                email_confirm: true
               });
-              if (!retryError && retryData?.session) {
-                token = retryData.session.access_token;
-                loginSuccess = true;
+              if (!createError) {
+                const { data: retryData, error: retryError } = await supabase.auth.signInWithPassword({
+                  email: user.email,
+                  password
+                });
+                if (!retryError && retryData?.session) {
+                  token = retryData.session.access_token;
+                  loginSuccess = true;
+                } else {
+                  console.error("[Supabase Auth] Retry sign-in failed post-creation:", retryError);
+                }
               } else {
-                console.error("[Supabase Auth] Retry sign-in failed post-creation:", retryError);
+                console.error("[Supabase Auth] Automatic GoTrue provisioning failed:", createError);
               }
             } else {
-              console.error("[Supabase Auth] Automatic GoTrue provisioning failed:", createError);
+              console.warn("[Supabase Auth] admin auth is not available. Falling back to local token generation.");
+              token = Buffer.from(user.username).toString("base64");
+              loginSuccess = true;
             }
-          } else {
-            console.warn("[Supabase Auth] admin auth is not available. Falling back to local token generation.");
-            token = Buffer.from(user.username).toString("base64");
-            loginSuccess = true;
           }
         }
       }
@@ -1617,32 +1637,22 @@ app.patch("/api/users/:id", async (req, res) => {
     console.log(`[Update User] Calling dbAdapter.updateUser with:`, updates);
     const updatedUser = await dbAdapter.updateUser(userId, updates);
     if (password !== void 0 && useSupabase && supabase?.auth?.admin) {
-      const targetUser = await dbAdapter.getUserById(userId);
-      let authUserId = userId;
-      const { data: authById, error: authByIdError } = await supabase.auth.admin.getUserById(userId);
-      if (authByIdError || !authById?.user) {
-        if (targetUser?.email) {
-          const { data: authUsersData, error: authUsersError } = await supabase.auth.admin.listUsers({ page: 1, perPage: 200 });
-          if (authUsersError) {
-            console.error("[Update User] Supabase auth user list failed:", authUsersError);
-          } else {
-            const matchedAuthUser = authUsersData?.users?.find(
-              (u) => (u.email || "").toLowerCase().trim() === targetUser.email.toLowerCase().trim()
-            );
-            if (matchedAuthUser?.id) {
-              authUserId = matchedAuthUser.id;
-              console.log(`[Update User] Resolved auth user by email for password update: ${targetUser.email} -> ${authUserId}`);
-            }
-          }
-        }
-      }
-      const { error: authPasswordError } = await supabase.auth.admin.updateUserById(authUserId, {
-        password: String(password)
-      });
-      if (authPasswordError) {
-        console.error("[Update User] Supabase auth password update failed:", authPasswordError);
+      const authTargetEmail = updatedUser.email || (await dbAdapter.getUserById(userId))?.email || "";
+      const authUserIds = await findSupabaseAuthUserIdsByEmail(authTargetEmail);
+      if (authUserIds.length === 0) {
+        console.error(`[Update User] No Supabase Auth user found for email: ${authTargetEmail}`);
         res.status(500).json({ error: "Profile was updated, but password update failed in Supabase Auth." });
         return;
+      }
+      for (const authUserId of authUserIds) {
+        const { error: authPasswordError } = await supabase.auth.admin.updateUserById(authUserId, {
+          password: String(password)
+        });
+        if (authPasswordError) {
+          console.error(`[Update User] Supabase auth password update failed for ${authUserId}:`, authPasswordError);
+          res.status(500).json({ error: "Profile was updated, but password update failed in Supabase Auth." });
+          return;
+        }
       }
     }
     console.log(`[Update User] SUCCESS: User updated:`, updatedUser.username);

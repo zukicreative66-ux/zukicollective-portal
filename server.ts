@@ -548,6 +548,29 @@ function sanitizePostgrestString(val: string): string {
   return val.replace(/[(),'"]/g, "").trim();
 }
 
+async function findSupabaseAuthUserIdsByEmail(email: string): Promise<string[]> {
+  if (!supabase?.auth?.admin) return [];
+
+  const cleanEmail = email.toLowerCase().trim();
+  if (!cleanEmail) return [];
+
+  const { data, error } = await supabase.auth.admin.listUsers({ page: 1, perPage: 200 });
+  if (error || !data?.users) {
+    console.error("[Supabase Auth] listUsers failed while resolving email:", error);
+    return [];
+  }
+
+  return data.users
+    .filter((candidate) => (candidate.email || "").toLowerCase().trim() === cleanEmail)
+    .map((candidate) => candidate.id)
+    .filter(Boolean);
+}
+
+async function supabaseAuthUserExistsByEmail(email: string): Promise<boolean> {
+  const matchedIds = await findSupabaseAuthUserIdsByEmail(email);
+  return matchedIds.length > 0;
+}
+
 // Unified Database Adapter Layer
 const dbAdapter = {
   async getUsers(): Promise<DBUser[]> {
@@ -1181,38 +1204,44 @@ app.post("/api/auth/login", ipRateLimiter(60000, 10, "Too many login attempts fr
         token = authData.session.access_token;
         loginSuccess = true;
       } else {
-        // Automatic on-the-fly migration to GoTrue Auth
-        // If the login failed on Supabase but the password matches our local hash, auto-register them in Supabase Auth!
-        const passwordMatches = verifyPassword(password, user.passwordHash);
-        if (passwordMatches) {
-          console.log(`[Supabase Auth] Migrating existing user ${user.username} with email ${user.email} to GoTrue Auth...`);
-          if (supabase.auth.admin) {
-            const { data: newUser, error: createError } = await supabase.auth.admin.createUser({
-              email: user.email,
-              password: password,
-              email_confirm: true,
-            });
+        const authAccountExists = await supabaseAuthUserExistsByEmail(user.email);
 
-            if (!createError) {
-              // Retry signing in now that they are registered in GoTrue
-              const { data: retryData, error: retryError } = await supabase.auth.signInWithPassword({
+        if (authAccountExists) {
+          console.log(`[Supabase Auth] Existing auth account found for ${user.email}; refusing local fallback after password failure.`);
+        } else {
+          // Automatic on-the-fly migration to GoTrue Auth
+          // If the login failed on Supabase but the password matches our local hash, auto-register them in Supabase Auth!
+          const passwordMatches = verifyPassword(password, user.passwordHash);
+          if (passwordMatches) {
+            console.log(`[Supabase Auth] Migrating existing user ${user.username} with email ${user.email} to GoTrue Auth...`);
+            if (supabase.auth.admin) {
+              const { data: newUser, error: createError } = await supabase.auth.admin.createUser({
                 email: user.email,
                 password: password,
+                email_confirm: true,
               });
-              if (!retryError && retryData?.session) {
-                token = retryData.session.access_token;
-                loginSuccess = true;
+
+              if (!createError) {
+                // Retry signing in now that they are registered in GoTrue
+                const { data: retryData, error: retryError } = await supabase.auth.signInWithPassword({
+                  email: user.email,
+                  password: password,
+                });
+                if (!retryError && retryData?.session) {
+                  token = retryData.session.access_token;
+                  loginSuccess = true;
+                } else {
+                  console.error("[Supabase Auth] Retry sign-in failed post-creation:", retryError);
+                }
               } else {
-                console.error("[Supabase Auth] Retry sign-in failed post-creation:", retryError);
+                console.error("[Supabase Auth] Automatic GoTrue provisioning failed:", createError);
               }
             } else {
-              console.error("[Supabase Auth] Automatic GoTrue provisioning failed:", createError);
+              console.warn("[Supabase Auth] admin auth is not available. Falling back to local token generation.");
+              // Generate standard fallback token for valid password matching local DB hash
+              token = Buffer.from(user.username).toString("base64");
+              loginSuccess = true;
             }
-          } else {
-            console.warn("[Supabase Auth] admin auth is not available. Falling back to local token generation.");
-            // Generate standard fallback token for valid password matching local DB hash
-            token = Buffer.from(user.username).toString("base64");
-            loginSuccess = true;
           }
         }
       }
@@ -1835,35 +1864,24 @@ app.patch("/api/users/:id", async (req, res) => {
     const updatedUser = await dbAdapter.updateUser(userId, updates);
 
     if (password !== undefined && useSupabase && supabase?.auth?.admin) {
-      const targetUser = await dbAdapter.getUserById(userId);
-      let authUserId = userId;
+      const authTargetEmail = updatedUser.email || (await dbAdapter.getUserById(userId))?.email || "";
+      const authUserIds = await findSupabaseAuthUserIdsByEmail(authTargetEmail);
 
-      const { data: authById, error: authByIdError } = await supabase.auth.admin.getUserById(userId);
-      if (authByIdError || !authById?.user) {
-        // Fallback: resolve the Supabase Auth user by email when DB id and Auth id diverge.
-        if (targetUser?.email) {
-          const { data: authUsersData, error: authUsersError } = await supabase.auth.admin.listUsers({ page: 1, perPage: 200 });
-          if (authUsersError) {
-            console.error("[Update User] Supabase auth user list failed:", authUsersError);
-          } else {
-            const matchedAuthUser = authUsersData?.users?.find(
-              (u) => (u.email || "").toLowerCase().trim() === targetUser.email.toLowerCase().trim()
-            );
-            if (matchedAuthUser?.id) {
-              authUserId = matchedAuthUser.id;
-              console.log(`[Update User] Resolved auth user by email for password update: ${targetUser.email} -> ${authUserId}`);
-            }
-          }
-        }
-      }
-
-      const { error: authPasswordError } = await supabase.auth.admin.updateUserById(authUserId, {
-        password: String(password),
-      });
-      if (authPasswordError) {
-        console.error("[Update User] Supabase auth password update failed:", authPasswordError);
+      if (authUserIds.length === 0) {
+        console.error(`[Update User] No Supabase Auth user found for email: ${authTargetEmail}`);
         res.status(500).json({ error: "Profile was updated, but password update failed in Supabase Auth." });
         return;
+      }
+
+      for (const authUserId of authUserIds) {
+        const { error: authPasswordError } = await supabase.auth.admin.updateUserById(authUserId, {
+          password: String(password),
+        });
+        if (authPasswordError) {
+          console.error(`[Update User] Supabase auth password update failed for ${authUserId}:`, authPasswordError);
+          res.status(500).json({ error: "Profile was updated, but password update failed in Supabase Auth." });
+          return;
+        }
       }
     }
 
