@@ -1,3 +1,4 @@
+import { SpeedInsights } from "@vercel/speed-insights/react"
 import React, { useState, useEffect } from 'react';
 import { User, TimeLog } from './types';
 import Sidebar from './components/Sidebar';
