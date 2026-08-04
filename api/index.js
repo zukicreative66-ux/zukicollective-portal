@@ -99,6 +99,10 @@ function getSeededUsers() {
   const izavaEmail = process.env.IZA_VA_EMAIL || "va_member@example.com";
   const izavaName = process.env.IZA_VA_NAME || "VA Member";
   const izavaPassword = process.env.IZA_VA_PASSWORD || "izava123";
+  const alliyahUsername = process.env.ALLIYAH_VA_USERNAME || "alliyah_va";
+  const alliyahEmail = process.env.ALLIYAH_VA_EMAIL || "va_member@example.com";
+  const alliyahName = process.env.ALLIYAH_VA_NAME || "Alliyah";
+  const alliyahPassword = process.env.ALLIYAH_VA_PASSWORD || "va_member123";
   return [
     {
       id: "user-admin",
@@ -132,12 +136,11 @@ function getSeededUsers() {
       // Capped at 50 hours as per requirements
     },
     {
-      id: "user-va2",
-      username: "va_member2",
-      email: "va_member2@example.com",
-      passwordHash: hashPassword("va_member123"),
-      // Seeded VA 2 with credentials
-      name: "VA Member Two",
+      id: "user-alliyah",
+      username: alliyahUsername,
+      email: alliyahEmail,
+      passwordHash: hashPassword(alliyahPassword),
+      name: alliyahName,
       role: "va",
       hourlyRate: 200,
       // PHP 200 per hour standard
@@ -226,6 +229,9 @@ function readDB() {
     if (!db.tasks) db.tasks = [];
     if (!db.users) db.users = [];
     const adminUsername = (process.env.DEV_USER_NAME || "admin").toLowerCase().trim();
+    const izavaUsername = (process.env.IZA_VA_USERNAME || "va_member").toLowerCase().trim();
+    const alliyahUsername = (process.env.ALLIYAH_VA_USERNAME || "alliyah_va").toLowerCase().trim();
+    const allowedUsernames = /* @__PURE__ */ new Set([adminUsername, izavaUsername, alliyahUsername]);
     let migrated = false;
     db.users = db.users.map((u) => {
       let pwd = u.passwordHash;
@@ -235,7 +241,13 @@ function readDB() {
       }
       let email = u.email;
       if (!email) {
-        email = u.username === adminUsername ? process.env.DEV_USER_EMAIL || "admin@example.com" : process.env.IZA_VA_EMAIL || "va_member@example.com";
+        if (u.username === adminUsername) {
+          email = process.env.DEV_USER_EMAIL || "admin@example.com";
+        } else if (u.username === alliyahUsername) {
+          email = process.env.ALLIYAH_VA_EMAIL || "va_member@example.com";
+        } else {
+          email = process.env.IZA_VA_EMAIL || "va_member@example.com";
+        }
         migrated = true;
       }
       return {
@@ -248,6 +260,14 @@ function readDB() {
         monthlyHoursCap: u.monthlyHoursCap || 160,
         photoUrl: u.photoUrl || ""
       };
+    });
+    const seenUsernames = /* @__PURE__ */ new Set();
+    db.users = db.users.filter((u) => {
+      const normalized = (u.username || "").toLowerCase().trim();
+      if (!allowedUsernames.has(normalized)) return false;
+      if (seenUsernames.has(normalized)) return false;
+      seenUsernames.add(normalized);
+      return true;
     });
     const usersToVerify = defaultDB.users;
     usersToVerify.forEach((seeded) => {
@@ -1981,6 +2001,11 @@ async function syncEnvCredentials() {
   const izavaName = process.env.IZA_VA_NAME || "VA Member";
   const izavaPassword = process.env.IZA_VA_PASSWORD || "izava123";
   const izavaHash = hashPassword(izavaPassword);
+  const alliyahUsername = process.env.ALLIYAH_VA_USERNAME || "alliyah_va";
+  const alliyahEmail = process.env.ALLIYAH_VA_EMAIL || "va_member@example.com";
+  const alliyahName = process.env.ALLIYAH_VA_NAME || "Alliyah";
+  const alliyahPassword = process.env.ALLIYAH_VA_PASSWORD || "va_member123";
+  const alliyahHash = hashPassword(alliyahPassword);
   try {
     const db = readDB();
     let updatedLocal = false;
@@ -2041,6 +2066,36 @@ async function syncEnvCredentials() {
         monthlyHoursCap: 160
       };
       db.users.push(newIzava);
+      updatedLocal = true;
+    }
+    const localAlliyah = db.users.find((u) => u.username.toLowerCase().trim() === alliyahUsername.toLowerCase().trim());
+    if (localAlliyah) {
+      if (localAlliyah.passwordHash !== alliyahHash || localAlliyah.email !== alliyahEmail || localAlliyah.name !== alliyahName || localAlliyah.username !== alliyahUsername) {
+        console.log(`[Credentials Sync] Updating Alliyah user password/email/name in local DB to match environment variables...`);
+        localAlliyah.username = alliyahUsername;
+        localAlliyah.email = alliyahEmail;
+        localAlliyah.name = alliyahName;
+        localAlliyah.passwordHash = alliyahHash;
+        updatedLocal = true;
+      }
+    } else {
+      console.log(`[Credentials Sync] User "${alliyahUsername}" not found in local DB. Creating...`);
+      const newAlliyah = {
+        id: "user-alliyah",
+        username: alliyahUsername,
+        email: alliyahEmail,
+        passwordHash: alliyahHash,
+        name: alliyahName,
+        role: "va",
+        hourlyRate: 200,
+        workType: "part-time",
+        scheduleStart: "09:00",
+        scheduleEnd: "17:00",
+        notificationTime: "09:00",
+        photoUrl: "",
+        monthlyHoursCap: 160
+      };
+      db.users.push(newAlliyah);
       updatedLocal = true;
     }
     if (updatedLocal) {
@@ -2162,6 +2217,60 @@ async function syncEnvCredentials() {
           await supabase.auth.admin.createUser({
             email: izavaEmail,
             password: izavaPassword,
+            email_confirm: true
+          });
+        }
+      }
+      const { data: dbAlliyah, error: dbAlliyahError } = await supabase.from("users").select("*").eq("username", alliyahUsername).maybeSingle();
+      if (dbAlliyahError) {
+        console.error("[Credentials Sync Error] Supabase Alliyah user query failed:", dbAlliyahError);
+      } else if (dbAlliyah) {
+        const mappedAlliyah = mapUserFromDb(dbAlliyah);
+        if (mappedAlliyah.passwordHash !== alliyahHash || mappedAlliyah.email !== alliyahEmail || mappedAlliyah.name !== alliyahName || mappedAlliyah.username !== alliyahUsername) {
+          console.log(`[Credentials Sync] Updating Alliyah user credentials in Supabase...`);
+          const dbUpdates = await mapUserToDb({
+            username: alliyahUsername,
+            email: alliyahEmail,
+            name: alliyahName,
+            passwordHash: alliyahHash
+          });
+          await supabase.from("users").update(dbUpdates).eq("id", mappedAlliyah.id);
+        }
+        if (supabase.auth.admin) {
+          const { error: authUpdateError } = await supabase.auth.admin.updateUserById(mappedAlliyah.id, {
+            password: alliyahPassword
+          });
+          if (authUpdateError) {
+            await supabase.auth.admin.createUser({
+              email: alliyahEmail,
+              password: alliyahPassword,
+              email_confirm: true
+            });
+          }
+        }
+      } else {
+        console.log(`[Credentials Sync] User "${alliyahUsername}" not found in Supabase. Creating...`);
+        const newAlliyah = {
+          id: "user-alliyah",
+          username: alliyahUsername,
+          email: alliyahEmail,
+          passwordHash: alliyahHash,
+          name: alliyahName,
+          role: "va",
+          hourlyRate: 200,
+          workType: "part-time",
+          scheduleStart: "09:00",
+          scheduleEnd: "17:00",
+          notificationTime: "09:00",
+          photoUrl: "",
+          monthlyHoursCap: 160
+        };
+        const dbInsert = await mapUserToDb(newAlliyah);
+        await supabase.from("users").insert([dbInsert]);
+        if (supabase.auth.admin) {
+          await supabase.auth.admin.createUser({
+            email: alliyahEmail,
+            password: alliyahPassword,
             email_confirm: true
           });
         }
