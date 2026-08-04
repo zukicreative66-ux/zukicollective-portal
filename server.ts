@@ -1835,7 +1835,29 @@ app.patch("/api/users/:id", async (req, res) => {
     const updatedUser = await dbAdapter.updateUser(userId, updates);
 
     if (password !== undefined && useSupabase && supabase?.auth?.admin) {
-      const { error: authPasswordError } = await supabase.auth.admin.updateUserById(userId, {
+      const targetUser = await dbAdapter.getUserById(userId);
+      let authUserId = userId;
+
+      const { data: authById, error: authByIdError } = await supabase.auth.admin.getUserById(userId);
+      if (authByIdError || !authById?.user) {
+        // Fallback: resolve the Supabase Auth user by email when DB id and Auth id diverge.
+        if (targetUser?.email) {
+          const { data: authUsersData, error: authUsersError } = await supabase.auth.admin.listUsers({ page: 1, perPage: 200 });
+          if (authUsersError) {
+            console.error("[Update User] Supabase auth user list failed:", authUsersError);
+          } else {
+            const matchedAuthUser = authUsersData?.users?.find(
+              (u) => (u.email || "").toLowerCase().trim() === targetUser.email.toLowerCase().trim()
+            );
+            if (matchedAuthUser?.id) {
+              authUserId = matchedAuthUser.id;
+              console.log(`[Update User] Resolved auth user by email for password update: ${targetUser.email} -> ${authUserId}`);
+            }
+          }
+        }
+      }
+
+      const { error: authPasswordError } = await supabase.auth.admin.updateUserById(authUserId, {
         password: String(password),
       });
       if (authPasswordError) {
