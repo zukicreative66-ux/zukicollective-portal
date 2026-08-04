@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { 
   Shield, Users, Search, DollarSign, Clock, FileDown, 
   Edit3, Check, X, AlertCircle, Trash2, Calendar, 
-  Settings, Folder, Kanban, UserCheck, AlertTriangle, Briefcase 
+  Settings, Folder, Kanban, UserCheck, Briefcase 
 } from 'lucide-react';
 import { User, TimeLog, Task } from '../types';
 
@@ -682,43 +682,63 @@ export default function AdminPanel({ user, logs, onRefreshLogs, token }: AdminPa
     }
   };
 
-  // Compute Latenesses across all scheduled VAs today
-  const getLateVAsList = () => {
-    const todayStr = new Date().toISOString().split('T')[0];
-    const lateVAs: Array<{ user: User; minutesLate: number }> = [];
-
-    // Filter only VA accounts (role === 'va')
-    const vaUsers = usersList.filter(u => u.role === 'va');
-
-    vaUsers.forEach(u => {
-      // Check if they clocked in today
-      const clockedInToday = logs.some(log => log.username === u.username && log.startTime.startsWith(todayStr));
-      if (clockedInToday) return; // not late
-
-      if (!u.scheduleStart) return;
-
-      // Calculate minutes difference
-      const [schedHour, schedMin] = u.scheduleStart.split(':').map(Number);
-      const now = new Date();
-      const currHour = now.getHours();
-      const currMin = now.getMinutes();
-
-      const schedMinutes = schedHour * 60 + schedMin;
-      const currMinutes = currHour * 60 + currMin;
-
-      // 5 mins grace
-      if (currMinutes > schedMinutes + 5) {
-        lateVAs.push({
-          user: u,
-          minutesLate: currMinutes - schedMinutes
-        });
-      }
-    });
-
-    return lateVAs;
+  const parseTimeToMinutes = (timeValue?: string): number | null => {
+    if (!timeValue || !timeValue.includes(':')) return null;
+    const [hour, minute] = timeValue.split(':').map(Number);
+    if (Number.isNaN(hour) || Number.isNaN(minute)) return null;
+    return hour * 60 + minute;
   };
 
-  const lateVAs = getLateVAsList();
+  const getShiftIdentifier = (va: User): { label: string; tone: 'good' | 'warn' | 'danger' | 'info' | 'neutral' } => {
+    const schedStart = parseTimeToMinutes(va.scheduleStart);
+    const schedEnd = parseTimeToMinutes(va.scheduleEnd);
+    if (schedStart === null || schedEnd === null) {
+      return { label: 'Schedule Missing', tone: 'neutral' };
+    }
+
+    const now = new Date();
+    const nowMinutes = now.getHours() * 60 + now.getMinutes();
+    const todayStr = now.toISOString().split('T')[0];
+    const todayLogs = logs.filter((log) => log.userId === va.id && log.startTime.startsWith(todayStr));
+
+    if (todayLogs.some((log) => !log.endTime)) {
+      return { label: 'Clocked In', tone: 'good' };
+    }
+
+    if (todayLogs.length > 0) {
+      const firstClockInMinutes = Math.min(
+        ...todayLogs.map((log) => {
+          const start = new Date(log.startTime);
+          return start.getHours() * 60 + start.getMinutes();
+        })
+      );
+
+      if (firstClockInMinutes > schedStart + 5) {
+        return { label: 'Late Arrival', tone: 'warn' };
+      }
+      return { label: 'Attended', tone: 'good' };
+    }
+
+    if (nowMinutes > schedEnd + 5) {
+      return { label: 'No Show', tone: 'danger' };
+    }
+    if (nowMinutes > schedStart + 5) {
+      return { label: 'Late (Not Clocked In)', tone: 'warn' };
+    }
+    if (nowMinutes >= schedStart - 10 && nowMinutes <= schedStart - 5) {
+      return { label: 'Clock-In Window', tone: 'info' };
+    }
+
+    return { label: 'Pending Shift', tone: 'neutral' };
+  };
+
+  const getShiftBadgeClass = (tone: 'good' | 'warn' | 'danger' | 'info' | 'neutral') => {
+    if (tone === 'good') return 'bg-emerald-500/15 text-emerald-300 border-emerald-500/20';
+    if (tone === 'warn') return 'bg-amber-500/15 text-amber-300 border-amber-500/20';
+    if (tone === 'danger') return 'bg-rose-500/15 text-rose-300 border-rose-500/20';
+    if (tone === 'info') return 'bg-sky-500/15 text-sky-300 border-sky-500/20';
+    return 'bg-brand-brown text-brand-cream/60 border-brand-peach/10';
+  };
 
   return (
     <div className="space-y-8 animate-fade-in text-brand-cream">
@@ -782,28 +802,6 @@ export default function AdminPanel({ user, logs, onRefreshLogs, token }: AdminPa
         <div className="flex items-center space-x-3 p-4 bg-brand-peach/10 border border-brand-peach/20 text-brand-peach rounded-xl">
           <Check size={18} className="shrink-0 text-brand-peach" />
           <span className="text-sm font-medium">{successMessage}</span>
-        </div>
-      )}
-
-      {/* Lateness Alarm Section - Triggers when VAs are late */}
-      {lateVAs.length > 0 && (
-        <div className="p-5 bg-amber-500/10 border border-amber-500/20 rounded-2xl space-y-3 animate-pulse">
-          <h3 className="text-amber-400 font-bold text-sm flex items-center gap-2">
-            <AlertTriangle size={18} /> Team Shift Lateness Notice
-          </h3>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            {lateVAs.map(({ user: va, minutesLate }) => (
-              <div key={va.id} className="bg-brand-brown-card/70 p-3 rounded-xl border border-amber-500/10 flex items-center justify-between text-xs">
-                <div>
-                  <span className="font-bold text-brand-cream block">{va.name}</span>
-                  <span className="text-brand-cream/60">Schedule: {va.scheduleStart} – {va.scheduleEnd}</span>
-                </div>
-                <span className="px-2 py-1 bg-amber-500/20 text-amber-300 font-mono font-bold rounded">
-                  Late {Math.floor(minutesLate / 60) > 0 ? `${Math.floor(minutesLate / 60)}h ` : ''}{minutesLate % 60}m
-                </span>
-              </div>
-            ))}
-          </div>
         </div>
       )}
 
@@ -1155,6 +1153,7 @@ export default function AdminPanel({ user, logs, onRefreshLogs, token }: AdminPa
             <div className="grid grid-cols-1 gap-6">
               {usersList.filter(u => u.role !== 'admin').map((u) => {
                 const isEditingUser = editingUserId === u.id;
+                const shiftIdentifier = getShiftIdentifier(u);
                 
                 return (
                   <div key={u.id} className="p-5 bg-brand-brown/30 border border-brand-peach/10 rounded-2xl flex flex-col lg:flex-row gap-6 items-start lg:items-center justify-between transition-all">
@@ -1183,6 +1182,9 @@ export default function AdminPanel({ user, logs, onRefreshLogs, token }: AdminPa
                           <span className="text-brand-peach/20">•</span>
                           <span className="px-2 py-0.5 rounded bg-brand-peach/10 text-brand-peach text-[9px] font-mono font-bold uppercase border border-brand-peach/10">
                             {u.role}
+                          </span>
+                          <span className={`px-2 py-0.5 rounded border text-[9px] font-mono font-bold uppercase ${getShiftBadgeClass(shiftIdentifier.tone)}`}>
+                            {shiftIdentifier.label}
                           </span>
                         </div>
                       </div>

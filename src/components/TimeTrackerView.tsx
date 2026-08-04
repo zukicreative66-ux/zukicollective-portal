@@ -219,20 +219,53 @@ export default function TimeTrackerView({ user, logs, onRefreshLogs, token }: Ti
     }
   }, [token, onRefreshLogs]);
 
-  const isLate = useMemo(() => {
-    if (!user.scheduleStart || user.role === 'admin') return false;
+  const shiftNotice = useMemo(() => {
+    if (user.role === 'admin' || !user.scheduleStart || !user.scheduleEnd || activeLog) {
+      return null;
+    }
 
-    const todayStr = new Date().toISOString().split('T')[0];
-    const loggedToday = userLogs.some(log => log.startTime.startsWith(todayStr));
-    if (loggedToday) return false;
+    const parseToMinutes = (value: string) => {
+      const [hour, minute] = value.split(':').map(Number);
+      if (Number.isNaN(hour) || Number.isNaN(minute)) return null;
+      return hour * 60 + minute;
+    };
 
-    const [schedHour, schedMin] = user.scheduleStart.split(':').map(Number);
+    const schedStart = parseToMinutes(user.scheduleStart);
+    const schedEnd = parseToMinutes(user.scheduleEnd);
+    if (schedStart === null || schedEnd === null) return null;
+
     const now = new Date();
-    const schedMinutes = schedHour * 60 + schedMin;
-    const currMinutes = now.getHours() * 60 + now.getMinutes();
+    const nowMinutes = now.getHours() * 60 + now.getMinutes();
+    const todayStr = now.toISOString().split('T')[0];
+    const loggedToday = userLogs.some((log) => log.startTime.startsWith(todayStr));
+    if (loggedToday) return null;
 
-    return currMinutes > schedMinutes + 5;
-  }, [user.scheduleStart, user.role, userLogs]);
+    if (nowMinutes >= schedStart - 10 && nowMinutes <= schedStart - 5) {
+      return {
+        level: 'info' as const,
+        title: 'Upcoming Shift Reminder',
+        message: `Your shift starts at ${user.scheduleStart}. Please clock in 5-10 minutes before start time.`,
+      };
+    }
+
+    if (nowMinutes > schedEnd + 5) {
+      return {
+        level: 'danger' as const,
+        title: 'Shift Marked as No Show',
+        message: `Your ${user.scheduleStart}-${user.scheduleEnd} shift was missed today. Contact admin if you need to submit a correction log.`,
+      };
+    }
+
+    if (nowMinutes > schedStart + 5) {
+      return {
+        level: 'warn' as const,
+        title: 'Late Clock-In Notice',
+        message: `You are past your scheduled start (${user.scheduleStart}). Please clock in immediately.`,
+      };
+    }
+
+    return null;
+  }, [activeLog, user.role, user.scheduleStart, user.scheduleEnd, userLogs]);
 
   return (
     <div className="space-y-8 animate-fade-in text-brand-cream">
@@ -274,15 +307,28 @@ export default function TimeTrackerView({ user, logs, onRefreshLogs, token }: Ti
         </div>
       )}
 
-      {/* Lateness Notification Notice */}
-      {isLate && !activeLog && (
-        <div className="flex items-center gap-3.5 p-4 bg-amber-500/10 border border-amber-500/20 text-amber-300 rounded-xl animate-pulse">
-          <AlertCircle size={20} className="shrink-0 text-amber-400" />
+      {/* Shift Reminder and Attendance Notifications */}
+      {shiftNotice && (
+        <div className={`flex items-center gap-3.5 p-4 rounded-xl ${
+          shiftNotice.level === 'info'
+            ? 'bg-sky-500/10 border border-sky-500/20 text-sky-300'
+            : shiftNotice.level === 'warn'
+            ? 'bg-amber-500/10 border border-amber-500/20 text-amber-300'
+            : 'bg-rose-500/10 border border-rose-500/20 text-rose-300'
+        }`}>
+          <AlertCircle
+            size={20}
+            className={`shrink-0 ${
+              shiftNotice.level === 'info'
+                ? 'text-sky-400'
+                : shiftNotice.level === 'warn'
+                ? 'text-amber-400'
+                : 'text-rose-400'
+            }`}
+          />
           <div>
-            <span className="text-sm font-bold block">⚠️ Daily Shift Lateness Alert</span>
-            <span className="text-xs text-brand-cream/80">
-              Your scheduled shift start time was <strong>{user.scheduleStart}</strong> today. Please clock in as soon as possible to record your activity.
-            </span>
+            <span className="text-sm font-bold block">{shiftNotice.title}</span>
+            <span className="text-xs text-brand-cream/85">{shiftNotice.message}</span>
           </div>
         </div>
       )}
