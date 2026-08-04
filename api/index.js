@@ -5,6 +5,8 @@ import fs from "fs";
 import crypto from "crypto";
 import nodemailer from "nodemailer";
 import { createClient } from "@supabase/supabase-js";
+import dotenv from "dotenv";
+dotenv.config();
 var app = express();
 var PORT = 3e3;
 var isVercel = !!process.env.VERCEL;
@@ -192,41 +194,7 @@ function getDefaultDB() {
         durationMinutes: 180
       }
     ],
-    tasks: [
-      {
-        id: "task-1",
-        userId: "user-maria",
-        userName: "VA Member A",
-        title: "Clean Client Sheets database",
-        project: "Database Setup",
-        status: "In Progress",
-        priority: "High",
-        description: "Go through Google Sheets row duplication and run cleanups on customer phone lists.",
-        createdAt: (/* @__PURE__ */ new Date()).toISOString()
-      },
-      {
-        id: "task-2",
-        userId: "user-maria",
-        userName: "VA Member A",
-        title: "Draft email outreach sequence",
-        project: "Marketing Outreach",
-        status: "Todo",
-        priority: "Medium",
-        description: "Write the 3-step follow up campaign for new registered webinar attendees.",
-        createdAt: (/* @__PURE__ */ new Date()).toISOString()
-      },
-      {
-        id: "task-3",
-        userId: "user-juan",
-        userName: "VA Member B",
-        title: "Format metric report deck",
-        project: "Monthly Reporting",
-        status: "Completed",
-        priority: "High",
-        description: "Apply company custom palette, fix line graphs, and export slide deck in PDF format.",
-        createdAt: (/* @__PURE__ */ new Date()).toISOString()
-      }
-    ]
+    tasks: []
   };
 }
 function readDB() {
@@ -381,6 +349,11 @@ async function detectTaskCasing() {
     tasksColumnCasing = "snake";
   }
   return tasksColumnCasing;
+}
+function isUuidLike(value) {
+  if (typeof value !== "string") return false;
+  const trimmed = value.trim();
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(trimmed);
 }
 function mapUserFromDb(row) {
   if (!row) return row;
@@ -645,17 +618,46 @@ var dbAdapter = {
     return db.users.find((u) => u.username.toLowerCase().trim() === cleanSearch || u.email.toLowerCase().trim() === cleanSearch) || null;
   },
   async updateUser(id, updates) {
+    console.log(`[DB Adapter] updateUser called for ID: ${id} with updates:`, Object.keys(updates));
     let updatedUser = null;
     if (supabase) {
       const dbUpdates = await mapUserToDb(updates);
-      const { data, error } = await supabase.from("users").update(dbUpdates).eq("id", id).select().maybeSingle();
+      console.log(`[DB Adapter] Updating Supabase with:`, dbUpdates);
+      let { data, error } = await supabase.from("users").update(dbUpdates).eq("id", id).select().maybeSingle();
+      if (error && error.code === "PGRST204" && error.message.includes("notification_time")) {
+        console.log(`[DB Adapter] notification_time column not found in Supabase, retrying without it`);
+        const { notification_time, notificationtime, ...dbUpdatesWithoutNotif } = dbUpdates;
+        if (Object.keys(dbUpdatesWithoutNotif).length > 0) {
+          const retry = await supabase.from("users").update(dbUpdatesWithoutNotif).eq("id", id).select().maybeSingle();
+          data = retry.data;
+          error = retry.error;
+        } else {
+          data = null;
+          error = null;
+        }
+      }
       if (!error && data) {
         updatedUser = mapUserFromDb(data);
+        console.log(`[DB Adapter] Supabase update success for user: ${updatedUser.username}`);
         if (updates.name) {
           const logCasing = await detectLogCasing();
           const updateObj = { name: updates.name };
           const logUserIdKey = logCasing === "snake" ? "user_id" : logCasing === "lowercase" ? "userid" : "userId";
           await supabase.from("logs").update(updateObj).eq(logUserIdKey, id);
+        }
+      } else if (!error) {
+        const resolvedUser = await dbAdapter.getUserById(id);
+        if (resolvedUser) {
+          updatedUser = resolvedUser;
+          console.log(`[DB Adapter] Supabase update applied; resolved updated user by id: ${resolvedUser.username}`);
+          if (updates.name) {
+            const logCasing = await detectLogCasing();
+            const updateObj = { name: updates.name };
+            const logUserIdKey = logCasing === "snake" ? "user_id" : logCasing === "lowercase" ? "userid" : "userId";
+            await supabase.from("logs").update(updateObj).eq(logUserIdKey, id);
+          }
+        } else {
+          console.error("[Supabase Error] updateUser fallback: update returned no row and user could not be resolved by id");
         }
       } else {
         console.error("[Supabase Error] updateUser fallback:", error);
@@ -663,14 +665,17 @@ var dbAdapter = {
     }
     const db = readDB();
     let idx = db.users.findIndex((u) => u.id === id);
+    console.log(`[DB Adapter] Found user at index ${idx} in local DB`);
     if (idx === -1) {
       const resolvedUser = await dbAdapter.getUserById(id);
       if (resolvedUser) {
         idx = db.users.findIndex((u) => u.username.toLowerCase().trim() === resolvedUser.username.toLowerCase().trim());
+        console.log(`[DB Adapter] Resolved user by username, new index: ${idx}`);
       }
     }
     if (idx !== -1) {
       db.users[idx] = { ...db.users[idx], ...updates };
+      console.log(`[DB Adapter] Updated local user: ${db.users[idx].username}`);
       if (updates.name) {
         db.logs.forEach((log) => {
           if (log.userId === id || idx !== -1 && log.userId === db.users[idx].id) {
@@ -679,9 +684,14 @@ var dbAdapter = {
         });
       }
       writeDB(db);
+      console.log(`[DB Adapter] Local DB written successfully`);
       return updatedUser || db.users[idx];
     }
-    if (updatedUser) return updatedUser;
+    if (updatedUser) {
+      console.log(`[DB Adapter] Returning Supabase-only update result`);
+      return updatedUser;
+    }
+    console.error(`[DB Adapter] User ${id} not found in any database`);
     throw new Error("User not found");
   },
   async createUser(user) {
@@ -704,21 +714,31 @@ var dbAdapter = {
     return created || user;
   },
   async deleteUser(id) {
+    let deletedFromSupabase = false;
     if (supabase) {
       const { error } = await supabase.from("users").delete().eq("id", id);
-      if (error) console.error("[Supabase Error] deleteUser:", error);
+      if (error) {
+        console.error("[Supabase Error] deleteUser:", error);
+      } else {
+        deletedFromSupabase = true;
+        console.log(`[Supabase] User ${id} deleted from Supabase`);
+      }
     }
     const db = readDB();
     const idx = db.users.findIndex((u) => u.id === id);
     if (idx !== -1) {
+      const deletedUser = db.users[idx];
       db.users.splice(idx, 1);
       writeDB(db);
+      console.log(`[Local DB] User ${deletedUser.username} (${id}) deleted from local database`);
       return true;
     }
-    return false;
+    console.log(`[Local DB] User ${id} not found in local database`);
+    return deletedFromSupabase;
   },
   async getTasks(userId) {
-    if (supabase) {
+    let supabaseTasks = [];
+    if (supabase && (!userId || isUuidLike(userId))) {
       let query = supabase.from("tasks").select("*");
       if (userId) {
         const taskCasing = await detectTaskCasing();
@@ -728,21 +748,47 @@ var dbAdapter = {
       const orderCol = await detectTaskCasing() === "snake" ? "created_at" : "createdAt";
       const { data, error } = await query.order(orderCol, { ascending: false });
       if (!error && data) {
-        return data.map(mapTaskFromDb);
+        supabaseTasks = data.map(mapTaskFromDb);
+      } else {
+        console.error("[Supabase Error] getTasks fallback:", error);
       }
-      console.error("[Supabase Error] getTasks fallback:", error);
+    } else if (userId && !isUuidLike(userId)) {
+      console.log(`[Supabase] Skipping task lookup for non-UUID user id: ${userId}`);
     }
     const db = readDB();
-    if (userId) return db.tasks.filter((t) => t.userId === userId);
-    return db.tasks;
+    const localTasks = userId ? db.tasks.filter((t) => t.userId === userId) : db.tasks;
+    const mergedMap = /* @__PURE__ */ new Map();
+    localTasks.forEach((task) => mergedMap.set(task.id, task));
+    supabaseTasks.forEach((task) => mergedMap.set(task.id, task));
+    return Array.from(mergedMap.values()).sort((a, b) => {
+      const aTime = new Date(a.createdAt).getTime();
+      const bTime = new Date(b.createdAt).getTime();
+      return bTime - aTime;
+    });
+  },
+  async getTaskById(id) {
+    let supabaseTask = null;
+    if (supabase && isUuidLike(id)) {
+      const { data, error } = await supabase.from("tasks").select("*").eq("id", id).maybeSingle();
+      if (!error && data) {
+        supabaseTask = mapTaskFromDb(data);
+      } else if (error) {
+        console.error("[Supabase Error] getTaskById fallback:", error);
+      }
+    }
+    const db = readDB();
+    const localTask = db.tasks.find((t) => t.id === id) || null;
+    return supabaseTask || localTask;
   },
   async createTask(task) {
     let createdTask = null;
-    if (supabase) {
+    if (supabase && isUuidLike(task.userId) && isUuidLike(task.id)) {
       const dbTask = await mapTaskToDb(task);
       const { data, error } = await supabase.from("tasks").insert(dbTask).select().maybeSingle();
       if (!error && data) createdTask = mapTaskFromDb(data);
       else console.error("[Supabase Error] createTask fallback:", error);
+    } else if (supabase && (!isUuidLike(task.userId) || !isUuidLike(task.id))) {
+      console.log(`[Supabase] Skipping task insert for non-UUID identifier: ${task.id}`);
     }
     const db = readDB();
     const taskToSave = createdTask || task;
@@ -752,11 +798,13 @@ var dbAdapter = {
   },
   async updateTask(id, updates) {
     let updatedTask = null;
-    if (supabase) {
+    if (supabase && isUuidLike(id)) {
       const dbUpdates = await mapTaskToDb(updates);
       const { data, error } = await supabase.from("tasks").update(dbUpdates).eq("id", id).select().maybeSingle();
       if (!error && data) updatedTask = mapTaskFromDb(data);
       else console.error("[Supabase Error] updateTask fallback:", error);
+    } else if (supabase && !isUuidLike(id)) {
+      console.log(`[Supabase] Skipping task update for non-UUID identifier: ${id}`);
     }
     const db = readDB();
     const idx = db.tasks.findIndex((t) => t.id === id);
@@ -770,10 +818,12 @@ var dbAdapter = {
   },
   async deleteTask(id) {
     let deletedFromSupabase = false;
-    if (supabase) {
+    if (supabase && isUuidLike(id)) {
       const { error } = await supabase.from("tasks").delete().eq("id", id);
       if (!error) deletedFromSupabase = true;
       else console.error("[Supabase Error] deleteTask fallback:", error);
+    } else if (supabase && !isUuidLike(id)) {
+      console.log(`[Supabase] Skipping task delete for non-UUID identifier: ${id}`);
     }
     const db = readDB();
     const idx = db.tasks.findIndex((t) => t.id === id);
@@ -785,7 +835,8 @@ var dbAdapter = {
     return deletedFromSupabase;
   },
   async getLogs(userId) {
-    if (supabase) {
+    let supabaseLogs = [];
+    if (supabase && (!userId || isUuidLike(userId))) {
       let query = supabase.from("logs").select("*");
       if (userId) {
         const logCasing = await detectLogCasing();
@@ -795,33 +846,61 @@ var dbAdapter = {
       const orderCol = await detectLogCasing() === "snake" ? "start_time" : "startTime";
       const { data, error } = await query.order(orderCol, { ascending: false });
       if (!error && data) {
-        return data.map(mapLogFromDb);
+        supabaseLogs = data.map(mapLogFromDb);
+      } else {
+        console.error("[Supabase Error] getLogs fallback:", error);
       }
-      console.error("[Supabase Error] getLogs fallback:", error);
+    } else if (userId && !isUuidLike(userId)) {
+      console.log(`[Supabase] Skipping log lookup for non-UUID user id: ${userId}`);
     }
     const db = readDB();
-    if (userId) return db.logs.filter((l) => l.userId === userId);
-    return db.logs;
+    const localLogs = userId ? db.logs.filter((l) => l.userId === userId) : db.logs;
+    const mergedMap = /* @__PURE__ */ new Map();
+    localLogs.forEach((l) => mergedMap.set(l.id, l));
+    supabaseLogs.forEach((l) => mergedMap.set(l.id, l));
+    return Array.from(mergedMap.values()).sort((a, b) => {
+      const aTime = new Date(a.startTime).getTime();
+      const bTime = new Date(b.startTime).getTime();
+      return bTime - aTime;
+    });
+  },
+  async getLogById(id) {
+    let supabaseLog = null;
+    if (supabase && isUuidLike(id)) {
+      const { data, error } = await supabase.from("logs").select("*").eq("id", id).maybeSingle();
+      if (!error && data) {
+        supabaseLog = mapLogFromDb(data);
+      } else if (error) {
+        console.error("[Supabase Error] getLogById fallback:", error);
+      }
+    }
+    const db = readDB();
+    const localLog = db.logs.find((l) => l.id === id) || null;
+    return supabaseLog || localLog;
   },
   async getActiveLog(userId) {
-    if (supabase) {
+    if (supabase && isUuidLike(userId)) {
       const logCasing = await detectLogCasing();
       const logUserIdKey = logCasing === "snake" ? "user_id" : logCasing === "lowercase" ? "userid" : "userId";
       const endTimeKey = logCasing === "snake" ? "end_time" : logCasing === "lowercase" ? "endtime" : "endTime";
       const { data, error } = await supabase.from("logs").select("*").eq(logUserIdKey, userId).is(endTimeKey, null).maybeSingle();
       if (!error && data) return mapLogFromDb(data);
       if (error) console.error("[Supabase Error] getActiveLog fallback:", error);
+    } else if (supabase && !isUuidLike(userId)) {
+      console.log(`[Supabase] Skipping active log lookup for non-UUID user id: ${userId}`);
     }
     const db = readDB();
     return db.logs.find((l) => l.userId === userId && !l.endTime) || null;
   },
   async createLog(log) {
     let createdLog = null;
-    if (supabase) {
+    if (supabase && isUuidLike(log.userId) && isUuidLike(log.id)) {
       const dbLog = await mapLogToDb(log);
       const { data, error } = await supabase.from("logs").insert(dbLog).select().maybeSingle();
       if (!error && data) createdLog = mapLogFromDb(data);
       else console.error("[Supabase Error] createLog fallback:", error);
+    } else if (supabase && (!isUuidLike(log.userId) || !isUuidLike(log.id))) {
+      console.log(`[Supabase] Skipping log insert for non-UUID identifier: ${log.id}`);
     }
     const db = readDB();
     const logToSave = createdLog || log;
@@ -831,11 +910,13 @@ var dbAdapter = {
   },
   async updateLog(id, updates) {
     let updatedLog = null;
-    if (supabase) {
+    if (supabase && isUuidLike(id)) {
       const dbUpdates = await mapLogToDb(updates);
       const { data, error } = await supabase.from("logs").update(dbUpdates).eq("id", id).select().maybeSingle();
       if (!error && data) updatedLog = mapLogFromDb(data);
       else console.error("[Supabase Error] updateLog fallback:", error);
+    } else if (supabase && !isUuidLike(id)) {
+      console.log(`[Supabase] Skipping log update for non-UUID identifier: ${id}`);
     }
     const db = readDB();
     const idx = db.logs.findIndex((l) => l.id === id);
@@ -849,10 +930,12 @@ var dbAdapter = {
   },
   async deleteLog(id) {
     let deletedFromSupabase = false;
-    if (supabase) {
+    if (supabase && isUuidLike(id)) {
       const { error } = await supabase.from("logs").delete().eq("id", id);
       if (!error) deletedFromSupabase = true;
       else console.error("[Supabase Error] deleteLog fallback:", error);
+    } else if (supabase && !isUuidLike(id)) {
+      console.log(`[Supabase] Skipping log delete for non-UUID identifier: ${id}`);
     }
     const db = readDB();
     const idx = db.logs.findIndex((l) => l.id === id);
@@ -902,12 +985,16 @@ function ipRateLimiter(windowMs, maxRequests, message) {
 app.use("/api", ipRateLimiter(6e4, 150, "Too many API requests from this IP. Please slow down."));
 var loginAttempts = /* @__PURE__ */ new Map();
 async function getUserFromToken(authHeader) {
-  if (!authHeader || !authHeader.startsWith("Bearer ")) return null;
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    console.log(`[getUserFromToken] No valid auth header provided`);
+    return null;
+  }
   const token = authHeader.split(" ")[1];
   try {
     if (useSupabase && supabase) {
       const { data: { user: authUser }, error } = await supabase.auth.getUser(token);
       if (error || !authUser) {
+        console.log(`[getUserFromToken] Supabase auth failed, falling back to legacy token. Error:`, error);
         try {
           const username = Buffer.from(token, "base64").toString("utf8");
           return await dbAdapter.getUserByUsername(username);
@@ -915,18 +1002,27 @@ async function getUserFromToken(authHeader) {
           return null;
         }
       }
-      return await dbAdapter.getUserByEmailOrUsername(authUser.email);
+      console.log(`[getUserFromToken] Supabase auth success! User email: ${authUser.email}, ID: ${authUser.id}`);
+      const dbUser = await dbAdapter.getUserByEmailOrUsername(authUser.email);
+      if (!dbUser) {
+        console.log(`[getUserFromToken] PROBLEM: User ${authUser.email} authenticated in Supabase but NOT FOUND in database!`);
+      } else {
+        console.log(`[getUserFromToken] Found user in DB: ${dbUser.username} (Role: ${dbUser.role})`);
+      }
+      return dbUser;
     } else {
       const username = Buffer.from(token, "base64").toString("utf8");
       return await dbAdapter.getUserByUsername(username);
     }
   } catch (e) {
+    console.log(`[getUserFromToken] Exception:`, e);
     return null;
   }
 }
 app.post("/api/auth/login", ipRateLimiter(6e4, 10, "Too many login attempts from this IP. Please try again in 1 minute."), async (req, res) => {
   try {
     const { username, password } = req.body;
+    console.log(`[Login] Attempt for username: ${username}`);
     if (!username || !password) {
       res.status(400).json({ error: "Username and password are required" });
       return;
@@ -940,9 +1036,11 @@ app.post("/api/auth/login", ipRateLimiter(6e4, 10, "Too many login attempts from
     }
     const user = await dbAdapter.getUserByEmailOrUsername(username);
     if (!user) {
+      console.log(`[Login] FAILED: User not found for username: ${username}`);
       res.status(401).json({ error: "Invalid username or password" });
       return;
     }
+    console.log(`[Login] Found user: ${user.username} (ID: ${user.id}, Role: ${user.role}, Email: ${user.email})`);
     let token = "";
     let loginSuccess = false;
     if (useSupabase && supabase) {
@@ -1012,6 +1110,7 @@ app.post("/api/auth/login", ipRateLimiter(6e4, 10, "Too many login attempts from
       return;
     }
     loginAttempts.delete(cleanUsername);
+    console.log(`[Login] SUCCESS: User ${user.username} logged in with role: ${user.role}`);
     res.json({
       user: {
         id: user.id,
@@ -1200,11 +1299,14 @@ app.get("/api/auth/check-username", async (req, res) => {
   res.json({ available: !existing });
 });
 app.post("/api/auth/invite", async (req, res) => {
+  console.log(`[Invite] Received invite request`);
   const adminUser = await getUserFromToken(req.headers.authorization);
   if (!adminUser || adminUser.role !== "admin" && adminUser.role !== "developer") {
+    console.log(`[Invite] BLOCKED: Unauthorized access attempt`);
     res.status(403).json({ error: "Admin access required" });
     return;
   }
+  console.log(`[Invite] Admin user verified: ${adminUser.username}`);
   const {
     email,
     name,
@@ -1215,41 +1317,76 @@ app.post("/api/auth/invite", async (req, res) => {
     scheduleEnd = "17:00",
     monthlyHoursCap = 160
   } = req.body;
+  console.log(`[Invite] Request data - Email: ${email}, Name: ${name}, Role: ${role}`);
   if (!email || typeof email !== "string" || !email.includes("@")) {
+    console.log(`[Invite] BLOCKED: Invalid email format`);
     res.status(400).json({ error: "A valid email address is required." });
     return;
   }
   if (!name || typeof name !== "string" || name.trim().length === 0) {
+    console.log(`[Invite] BLOCKED: Name is required`);
     res.status(400).json({ error: "Full name is required." });
     return;
   }
   if (!["va", "developer", "admin"].includes(role)) {
+    console.log(`[Invite] BLOCKED: Invalid role: ${role}`);
     res.status(400).json({ error: "Invalid role. Must be va or developer." });
     return;
   }
+  console.log(`[Invite] Checking for existing user with email: ${email.trim()}`);
   const existing = await dbAdapter.getUserByEmailOrUsername(email.trim());
   if (existing) {
-    res.status(409).json({ error: "A user with this email already exists." });
+    console.log(`[Invite] BLOCKED: User already exists - ${existing.name} (@${existing.username})`);
+    res.status(409).json({
+      error: `A user with this email already exists: ${existing.name} (@${existing.username}). Please delete this user first if you want to re-invite them.`,
+      existingUser: {
+        id: existing.id,
+        name: existing.name,
+        username: existing.username,
+        email: existing.email
+      }
+    });
     return;
   }
+  console.log(`[Invite] No existing user found. Proceeding with invite.`);
   const userId = "user-" + crypto.randomBytes(8).toString("hex");
+  console.log(`[Invite] Generated user ID: ${userId}`);
+  console.log(`[Invite] Mode check - useSupabase: ${useSupabase}, supabase available: ${!!supabase}`);
   if (useSupabase && supabase) {
+    console.log(`[Invite] Using Supabase mode - creating user directly with temporary password`);
     try {
-      const portalUrl = process.env.PORTAL_URL || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : null) || "http://localhost:3000";
-      const redirectTo = `${portalUrl}/accept-invite`;
-      const { data: inviteData, error: inviteError } = await supabase.auth.admin.inviteUserByEmail(email.trim(), {
-        redirectTo,
-        data: { name: name.trim(), role, portalUserId: userId }
+      const tempPassword = crypto.randomBytes(8).toString("hex");
+      const baseUsername = email.trim().split("@")[0].replace(/[^a-zA-Z0-9_]/g, "_").slice(0, 20) + "_va";
+      let finalUsername = baseUsername;
+      let counter = 1;
+      while (await dbAdapter.getUserByUsername(finalUsername)) {
+        finalUsername = baseUsername + counter;
+        counter++;
+      }
+      console.log(`[Invite] Generated username: ${finalUsername}, Creating user in Supabase Auth...`);
+      const { data: authData, error: authError } = await supabase.auth.admin.createUser({
+        email: email.trim(),
+        password: tempPassword,
+        email_confirm: true,
+        // Auto-confirm email so they can login immediately
+        user_metadata: {
+          name: name.trim(),
+          role,
+          username: finalUsername
+        }
       });
-      if (inviteError) {
-        res.status(500).json({ error: `Supabase invite failed: ${inviteError.message}` });
+      console.log(`[Invite] Supabase Auth createUser response - Data:`, authData?.user?.id, `Error:`, authError);
+      if (authError) {
+        console.error(`[Invite] Supabase user creation error:`, authError);
+        res.status(500).json({ error: `Failed to create user in Supabase: ${authError.message}` });
         return;
       }
-      const pendingUser = {
-        id: inviteData?.user?.id || userId,
-        username: `pending_${userId.slice(-8)}`,
+      const newUser = {
+        id: authData?.user?.id || userId,
+        username: finalUsername,
         email: email.trim(),
-        passwordHash: "",
+        passwordHash: hashPassword(tempPassword),
+        // Store hashed password for local auth fallback
         name: name.trim(),
         role,
         hourlyRate: Number(hourlyRate) || 200,
@@ -1260,16 +1397,31 @@ app.post("/api/auth/invite", async (req, res) => {
         photoUrl: "",
         monthlyHoursCap: Number(monthlyHoursCap) || 160
       };
-      await dbAdapter.createUser(pendingUser);
+      await dbAdapter.createUser(newUser);
+      console.log(`[Invite] User created successfully in both Auth and Database.`);
       res.json({
         success: true,
-        message: `Invite email sent to ${email.trim()}. They will receive a link to set up their account.`
+        message: `User created successfully! Share these temporary login credentials with ${name.trim()}.`,
+        tempCredentials: {
+          username: finalUsername,
+          email: email.trim(),
+          password: tempPassword
+        },
+        user: {
+          id: newUser.id,
+          name: newUser.name,
+          username: newUser.username,
+          email: newUser.email,
+          role: newUser.role
+        }
       });
     } catch (err) {
-      console.error("[Invite Error]:", err);
-      res.status(500).json({ error: err.message || "Failed to send invite." });
+      console.error("[Invite Error] Exception caught:", err);
+      console.error("[Invite Error] Stack trace:", err.stack);
+      res.status(500).json({ error: err.message || "Failed to create user." });
     }
   } else {
+    console.log(`[Invite] Using local mode (Supabase not configured)`);
     const tempPassword = crypto.randomBytes(5).toString("hex");
     const baseUsername = email.trim().split("@")[0].replace(/[^a-zA-Z0-9_]/g, "_").slice(0, 20) + "_va";
     let finalUsername = baseUsername;
@@ -1278,6 +1430,7 @@ app.post("/api/auth/invite", async (req, res) => {
       finalUsername = baseUsername + counter;
       counter++;
     }
+    console.log(`[Invite] Created local user with username: ${finalUsername}`);
     const newUser = {
       id: userId,
       username: finalUsername,
@@ -1374,12 +1527,15 @@ app.post("/api/auth/accept-invite", async (req, res) => {
 });
 app.get("/api/users", async (req, res) => {
   const user = await getUserFromToken(req.headers.authorization);
-  if (!user || user.role !== "admin") {
+  if (!user || user.role !== "admin" && user.role !== "developer") {
+    console.log(`[Get Users] BLOCKED: Unauthorized access attempt by ${user?.username || "unknown"} (role: ${user?.role || "none"})`);
     res.status(403).json({ error: "Admin access required" });
     return;
   }
+  console.log(`[Get Users] Request by admin: ${user.username}`);
   const users = await dbAdapter.getUsers();
   const cleanUsers = users.map(({ passwordHash, ...u }) => u);
+  console.log(`[Get Users] Returning ${cleanUsers.length} users`);
   res.json(cleanUsers);
 });
 app.patch("/api/users/profile", async (req, res) => {
@@ -1418,9 +1574,34 @@ app.patch("/api/users/:id", async (req, res) => {
     res.status(403).json({ error: "Admin access required" });
     return;
   }
-  const { name, workType, scheduleStart, scheduleEnd, notificationTime, monthlyHoursCap, hourlyRate } = req.body;
+  const userId = req.params.id;
+  const { name, username, password, workType, scheduleStart, scheduleEnd, notificationTime, monthlyHoursCap, hourlyRate } = req.body;
+  console.log(`[Update User] Request to update user ID: ${userId}`);
+  console.log(`[Update User] Updates:`, { name, username, workType, scheduleStart, scheduleEnd, notificationTime, monthlyHoursCap, hourlyRate, hasPassword: !!password });
   const updates = {};
   if (name !== void 0) updates.name = name;
+  if (username !== void 0) {
+    const cleanUsername = String(username).toLowerCase().trim();
+    if (!/^[a-z0-9_]{3,30}$/.test(cleanUsername)) {
+      res.status(400).json({ error: "Username must be 3-30 chars and contain only lowercase letters, numbers, and underscores." });
+      return;
+    }
+    const users = await dbAdapter.getUsers();
+    const duplicate = users.find((u) => u.id !== userId && u.username.toLowerCase().trim() === cleanUsername);
+    if (duplicate) {
+      res.status(409).json({ error: "Username is already in use." });
+      return;
+    }
+    updates.username = cleanUsername;
+  }
+  if (password !== void 0) {
+    const cleanPassword = String(password);
+    if (cleanPassword.length < 8) {
+      res.status(400).json({ error: "Password must be at least 8 characters." });
+      return;
+    }
+    updates.passwordHash = hashPassword(cleanPassword);
+  }
   if (workType !== void 0) {
     updates.workType = workType;
     if (hourlyRate === void 0) {
@@ -1433,11 +1614,64 @@ app.patch("/api/users/:id", async (req, res) => {
   if (monthlyHoursCap !== void 0) updates.monthlyHoursCap = Number(monthlyHoursCap);
   if (hourlyRate !== void 0) updates.hourlyRate = Number(hourlyRate);
   try {
-    const updatedUser = await dbAdapter.updateUser(req.params.id, updates);
+    console.log(`[Update User] Calling dbAdapter.updateUser with:`, updates);
+    const updatedUser = await dbAdapter.updateUser(userId, updates);
+    if (password !== void 0 && useSupabase && supabase?.auth?.admin) {
+      const { error: authPasswordError } = await supabase.auth.admin.updateUserById(userId, {
+        password: String(password)
+      });
+      if (authPasswordError) {
+        console.error("[Update User] Supabase auth password update failed:", authPasswordError);
+        res.status(500).json({ error: "Profile was updated, but password update failed in Supabase Auth." });
+        return;
+      }
+    }
+    console.log(`[Update User] SUCCESS: User updated:`, updatedUser.username);
     const { passwordHash, ...cleanUser } = updatedUser;
     res.json(cleanUser);
   } catch (err) {
+    console.error(`[Update User] ERROR:`, err);
     res.status(404).json({ error: err.message });
+  }
+});
+app.delete("/api/users/:id", async (req, res) => {
+  const adminUser = await getUserFromToken(req.headers.authorization);
+  if (!adminUser || adminUser.role !== "admin" && adminUser.role !== "developer") {
+    res.status(403).json({ error: "Admin access required" });
+    return;
+  }
+  const userId = req.params.id;
+  console.log(`[Delete User] Request to delete user ID: ${userId} by admin: ${adminUser.username}`);
+  if (userId === adminUser.id) {
+    console.log(`[Delete User] BLOCKED: Admin attempted to delete their own account`);
+    res.status(400).json({ error: "Cannot delete your own account" });
+    return;
+  }
+  const users = await dbAdapter.getUsers();
+  const userToDelete = users.find((u) => u.id === userId);
+  if (!userToDelete) {
+    console.log(`[Delete User] ERROR: User ${userId} not found`);
+    res.status(404).json({ error: "User not found" });
+    return;
+  }
+  if (userToDelete.role === "admin" && adminUser.role !== "admin") {
+    console.log(`[Delete User] BLOCKED: Cannot delete admin user ${userToDelete.username}`);
+    res.status(403).json({ error: "Cannot delete admin accounts" });
+    return;
+  }
+  try {
+    console.log(`[Delete User] Attempting to delete user: ${userToDelete.username} (${userId})`);
+    const deleted = await dbAdapter.deleteUser(userId);
+    if (deleted) {
+      console.log(`[Delete User] SUCCESS: User ${userToDelete.name} deleted successfully`);
+      res.json({ success: true, message: `User ${userToDelete.name} has been deleted successfully` });
+    } else {
+      console.log(`[Delete User] WARNING: Delete returned false for user ${userId}`);
+      res.status(500).json({ error: "Failed to delete user from database" });
+    }
+  } catch (err) {
+    console.error(`[Delete User] EXCEPTION:`, err);
+    res.status(500).json({ error: err.message || "Failed to delete user" });
   }
 });
 app.get("/api/tasks", async (req, res) => {
@@ -1448,7 +1682,14 @@ app.get("/api/tasks", async (req, res) => {
   }
   if (user.role === "admin") {
     const tasks = await dbAdapter.getTasks();
-    res.json(tasks);
+    const users = await dbAdapter.getUsers();
+    const vaUsers = users.filter((u) => u.role === "va");
+    const vaIds = new Set(vaUsers.map((u) => u.id));
+    const vaUsernames = new Set(vaUsers.map((u) => u.username));
+    const vaOnlyTasks = tasks.filter((task) => {
+      return vaIds.has(task.userId) || vaUsernames.has(task.userName);
+    });
+    res.json(vaOnlyTasks);
   } else {
     const tasks = await dbAdapter.getTasks(user.id);
     res.json(tasks);
@@ -1514,8 +1755,7 @@ app.patch("/api/tasks/:id", async (req, res) => {
   }
   const { title, project, status, priority, description } = req.body;
   try {
-    const tasks = await dbAdapter.getTasks();
-    const task = tasks.find((t) => t.id === req.params.id);
+    const task = await dbAdapter.getTaskById(req.params.id);
     if (!task) {
       res.status(404).json({ error: "Task not found" });
       return;
@@ -1574,8 +1814,7 @@ app.delete("/api/tasks/:id", async (req, res) => {
     res.status(401).json({ error: "Unauthorized" });
     return;
   }
-  const tasks = await dbAdapter.getTasks();
-  const task = tasks.find((t) => t.id === req.params.id);
+  const task = await dbAdapter.getTaskById(req.params.id);
   if (!task) {
     res.status(404).json({ error: "Task not found" });
     return;
@@ -1584,7 +1823,11 @@ app.delete("/api/tasks/:id", async (req, res) => {
     res.status(403).json({ error: "Permission denied" });
     return;
   }
-  await dbAdapter.deleteTask(req.params.id);
+  const deleted = await dbAdapter.deleteTask(req.params.id);
+  if (!deleted) {
+    res.status(404).json({ error: "Task not found" });
+    return;
+  }
   res.json({ success: true });
 });
 app.get("/api/logs", async (req, res) => {
@@ -1663,8 +1906,7 @@ app.delete("/api/logs/:id", async (req, res) => {
     res.status(401).json({ error: "Unauthorized" });
     return;
   }
-  const logs = await dbAdapter.getLogs();
-  const log = logs.find((l) => l.id === req.params.id);
+  const log = await dbAdapter.getLogById(req.params.id);
   if (!log) {
     res.status(404).json({ error: "Log not found" });
     return;
@@ -1673,7 +1915,11 @@ app.delete("/api/logs/:id", async (req, res) => {
     res.status(403).json({ error: "Permission denied" });
     return;
   }
-  await dbAdapter.deleteLog(req.params.id);
+  const deleted = await dbAdapter.deleteLog(req.params.id);
+  if (!deleted) {
+    res.status(404).json({ error: "Log not found" });
+    return;
+  }
   res.json({ success: true });
 });
 app.patch("/api/logs/:id", async (req, res) => {
@@ -1816,13 +2062,25 @@ async function syncEnvCredentials() {
           monthlyHoursCap: 160
         };
         const dbInsert = await mapUserToDb(newAdmin);
-        await supabase.from("users").insert([dbInsert]);
+        console.log(`[Credentials Sync] Inserting admin into database...`);
+        const { data: insertData, error: insertError } = await supabase.from("users").insert([dbInsert]).select();
+        if (insertError) {
+          console.error(`[Credentials Sync] FAILED to insert admin into database:`, insertError);
+        } else {
+          console.log(`[Credentials Sync] Admin user inserted successfully:`, insertData);
+        }
         if (supabase.auth.admin) {
-          await supabase.auth.admin.createUser({
+          console.log(`[Credentials Sync] Creating admin in Supabase Auth...`);
+          const { data: authData, error: authError } = await supabase.auth.admin.createUser({
             email: adminEmail,
             password: adminPassword,
             email_confirm: true
           });
+          if (authError) {
+            console.error(`[Credentials Sync] FAILED to create admin in Auth:`, authError);
+          } else {
+            console.log(`[Credentials Sync] Admin created in Auth successfully. ID: ${authData.user?.id}`);
+          }
         }
       }
       const { data: dbVa, error: dbVaError } = await supabase.from("users").select("*").eq("username", izavaUsername).maybeSingle();

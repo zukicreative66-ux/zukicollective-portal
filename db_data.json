@@ -80,88 +80,17 @@
       "username": "va_member",
       "email": "va_member@example.com",
       "passwordHash": "f35619a3b45169acb6dd21d57fe14449198571ce667d1d8f154077de51b2c442",
-      "name": "VA Member",
+      "name": "Alliyah",
       "role": "va",
       "hourlyRate": 200,
-      "workType": "full-time",
-      "scheduleStart": "09:00",
-      "scheduleEnd": "17:00",
+      "workType": "part-time",
+      "scheduleStart": "08:00",
+      "scheduleEnd": "10:00",
       "notificationTime": "09:00",
       "photoUrl": "",
-      "monthlyHoursCap": 50
+      "monthlyHoursCap": 60
     }
   ],
-  "logs": [
-    {
-      "id": "log-1",
-      "userId": "user-maria",
-      "username": "va_member_a",
-      "name": "VA Member A",
-      "role": "va",
-      "startTime": "2026-07-16T04:14:16.745Z",
-      "endTime": "2026-07-16T08:14:16.745Z",
-      "description": "Updated client sheets, parsed email queues, and organized calendar events for next week.",
-      "isManual": false,
-      "durationMinutes": 240
-    },
-    {
-      "id": "log-2",
-      "userId": "user-maria",
-      "username": "va_member_a",
-      "name": "VA Member A",
-      "role": "va",
-      "startTime": "2026-07-17T04:14:16.745Z",
-      "endTime": "2026-07-17T09:44:16.745Z",
-      "description": "Conducted onboarding calling support and formatted the quarterly metric visual deck.",
-      "isManual": false,
-      "durationMinutes": 330
-    },
-    {
-      "id": "log-3",
-      "userId": "user-admin",
-      "username": "zuki_dev",
-      "name": "Zuki Creatives",
-      "role": "admin",
-      "startTime": "2026-07-16T16:14:16.745Z",
-      "endTime": "2026-07-16T19:14:16.745Z",
-      "description": "Fixed CORS issues, configured system environment variables, and optimized Docker container ingress pipelines.",
-      "isManual": false,
-      "durationMinutes": 180
-    }
-  ],
-  "tasks": [
-    {
-      "id": "task-1",
-      "userId": "user-maria",
-      "userName": "VA Member A",
-      "title": "Clean Client Sheets database",
-      "project": "Database Setup",
-      "status": "In Progress",
-      "priority": "High",
-      "description": "Go through Google Sheets row duplication and run cleanups on customer phone lists.",
-      "createdAt": "2026-07-18T04:14:16.745Z"
-    },
-    {
-      "id": "task-2",
-      "userId": "user-maria",
-      "userName": "VA Member A",
-      "title": "Draft email outreach sequence",
-      "project": "Marketing Outreach",
-      "status": "Todo",
-      "priority": "Medium",
-      "description": "Write the 3-step follow up campaign for new registered webinar attendees.",
-      "createdAt": "2026-07-18T04:14:16.745Z"
-    },
-    {
-      "id": "task-3",
-      "userId": "user-juan",
-      "userName": "VA Member B",
-      "title": "Format metric report deck",
-      "project": "Monthly Reporting",
-      "status": "Completed",
-      "priority": "High",
-      "description": "Apply company custom palette, fix line graphs, and export slide deck in PDF format.",
-      "createdAt": "2026-07-18T04:14:16.745Z"
-    }
-  ]
+  "logs": [],
+  "tasks": []
 }

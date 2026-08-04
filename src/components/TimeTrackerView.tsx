@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import { Clock, Play, Square, AlertCircle, FileText, CheckCircle2, Trash2, Plus, Kanban, ArrowRight } from 'lucide-react';
+import { Clock, Play, Square, AlertCircle, FileText, CheckCircle2, Plus, Kanban, Trash2 } from 'lucide-react';
 import { User, TimeLog } from '../types';
 import ProjectTracker from './ProjectTracker';
 
@@ -197,9 +197,8 @@ export default function TimeTrackerView({ user, logs, onRefreshLogs, token }: Ti
     }
   }, [manualDate, manualDescription, manualHours, manualMinutes, token, onRefreshLogs]);
 
-  // 4. Delete Log Action
   const handleDeleteLog = useCallback(async (logId: string) => {
-    if (!confirm('Are you sure you want to delete this time log record?')) return;
+    if (!confirm('Are you sure you want to delete this finished timesheet entry?')) return;
     try {
       const response = await fetch(`/api/logs/${logId}`, {
         method: 'DELETE',
@@ -207,14 +206,16 @@ export default function TimeTrackerView({ user, logs, onRefreshLogs, token }: Ti
           'Authorization': `Bearer ${token}`,
         },
       });
+
       if (!response.ok) {
-        const err = await response.json();
-        throw new Error(err.error || 'Failed to delete');
+        const err = await response.json().catch(() => null);
+        throw new Error(err?.error || 'Failed to delete timesheet entry');
       }
-      setSuccessMessage('Log record deleted successfully.');
+
+      setSuccessMessage('Timesheet entry deleted successfully.');
       onRefreshLogs();
     } catch (err: any) {
-      setErrorMessage(err.message);
+      setErrorMessage(err.message || 'Error deleting timesheet entry');
     }
   }, [token, onRefreshLogs]);
 
@@ -534,7 +535,7 @@ export default function TimeTrackerView({ user, logs, onRefreshLogs, token }: Ti
                             <button
                               onClick={() => handleDeleteLog(log.id)}
                               className="text-brand-peach/40 hover:text-rose-400 p-1.5 rounded-xl hover:bg-rose-500/10 transition-colors cursor-pointer"
-                              title="Delete Record"
+                              title="Delete timesheet entry"
                             >
                               <Trash2 size={16} />
                             </button>

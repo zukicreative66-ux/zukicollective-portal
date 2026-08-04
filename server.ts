@@ -249,41 +249,7 @@ function getDefaultDB(): DBStructure {
         durationMinutes: 180,
       },
     ],
-    tasks: [
-      {
-        id: "task-1",
-        userId: "user-maria",
-        userName: "VA Member A",
-        title: "Clean Client Sheets database",
-        project: "Database Setup",
-        status: "In Progress",
-        priority: "High",
-        description: "Go through Google Sheets row duplication and run cleanups on customer phone lists.",
-        createdAt: new Date().toISOString()
-      },
-      {
-        id: "task-2",
-        userId: "user-maria",
-        userName: "VA Member A",
-        title: "Draft email outreach sequence",
-        project: "Marketing Outreach",
-        status: "Todo",
-        priority: "Medium",
-        description: "Write the 3-step follow up campaign for new registered webinar attendees.",
-        createdAt: new Date().toISOString()
-      },
-      {
-        id: "task-3",
-        userId: "user-juan",
-        userName: "VA Member B",
-        title: "Format metric report deck",
-        project: "Monthly Reporting",
-        status: "Completed",
-        priority: "High",
-        description: "Apply company custom palette, fix line graphs, and export slide deck in PDF format.",
-        createdAt: new Date().toISOString()
-      }
-    ]
+    tasks: []
   };
 }
 
@@ -457,6 +423,12 @@ async function detectTaskCasing() {
     tasksColumnCasing = "snake";
   }
   return tasksColumnCasing;
+}
+
+function isUuidLike(value?: string | null): boolean {
+  if (typeof value !== "string") return false;
+  const trimmed = value.trim();
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(trimmed);
 }
 
 function mapUserFromDb(row: any): DBUser {
@@ -675,14 +647,20 @@ const dbAdapter = {
       if (error && error.code === 'PGRST204' && error.message.includes('notification_time')) {
         console.log(`[DB Adapter] notification_time column not found in Supabase, retrying without it`);
         const { notification_time, notificationtime, ...dbUpdatesWithoutNotif } = dbUpdates;
-        const retry = await supabase
-          .from("users")
-          .update(dbUpdatesWithoutNotif)
-          .eq("id", id)
-          .select()
-          .maybeSingle();
-        data = retry.data;
-        error = retry.error;
+        if (Object.keys(dbUpdatesWithoutNotif).length > 0) {
+          const retry = await supabase
+            .from("users")
+            .update(dbUpdatesWithoutNotif)
+            .eq("id", id)
+            .select()
+            .maybeSingle();
+          data = retry.data;
+          error = retry.error;
+        } else {
+          // Only notification_time was provided and this schema does not support it.
+          data = null;
+          error = null;
+        }
       }
       
       if (!error && data) {
@@ -693,6 +671,21 @@ const dbAdapter = {
           const updateObj = { name: updates.name };
           const logUserIdKey = logCasing === "snake" ? "user_id" : (logCasing === "lowercase" ? "userid" : "userId");
           await supabase.from("logs").update(updateObj).eq(logUserIdKey, id);
+        }
+      } else if (!error) {
+        // Some schemas/return settings can apply update but return no row payload.
+        const resolvedUser = await dbAdapter.getUserById(id);
+        if (resolvedUser) {
+          updatedUser = resolvedUser;
+          console.log(`[DB Adapter] Supabase update applied; resolved updated user by id: ${resolvedUser.username}`);
+          if (updates.name) {
+            const logCasing = await detectLogCasing();
+            const updateObj = { name: updates.name };
+            const logUserIdKey = logCasing === "snake" ? "user_id" : (logCasing === "lowercase" ? "userid" : "userId");
+            await supabase.from("logs").update(updateObj).eq(logUserIdKey, id);
+          }
+        } else {
+          console.error("[Supabase Error] updateUser fallback: update returned no row and user could not be resolved by id");
         }
       } else {
         console.error("[Supabase Error] updateUser fallback:", error);
@@ -790,7 +783,8 @@ const dbAdapter = {
   },
 
   async getTasks(userId?: string): Promise<DBTask[]> {
-    if (supabase) {
+    let supabaseTasks: DBTask[] = [];
+    if (supabase && (!userId || isUuidLike(userId))) {
       let query = supabase.from("tasks").select("*");
       if (userId) {
         const taskCasing = await detectTaskCasing();
@@ -800,18 +794,51 @@ const dbAdapter = {
       const orderCol = (await detectTaskCasing()) === "snake" ? "created_at" : "createdAt";
       const { data, error } = await query.order(orderCol, { ascending: false });
       if (!error && data) {
-        return data.map(mapTaskFromDb);
+        supabaseTasks = data.map(mapTaskFromDb);
+      } else {
+        console.error("[Supabase Error] getTasks fallback:", error);
       }
-      console.error("[Supabase Error] getTasks fallback:", error);
+    } else if (userId && !isUuidLike(userId)) {
+      console.log(`[Supabase] Skipping task lookup for non-UUID user id: ${userId}`);
     }
     const db = readDB();
-    if (userId) return db.tasks.filter(t => t.userId === userId);
-    return db.tasks;
+    const localTasks = userId ? db.tasks.filter(t => t.userId === userId) : db.tasks;
+
+    // Merge local and Supabase results so legacy/local tasks remain operable.
+    const mergedMap = new Map<string, DBTask>();
+    localTasks.forEach((task) => mergedMap.set(task.id, task));
+    supabaseTasks.forEach((task) => mergedMap.set(task.id, task));
+
+    return Array.from(mergedMap.values()).sort((a, b) => {
+      const aTime = new Date(a.createdAt).getTime();
+      const bTime = new Date(b.createdAt).getTime();
+      return bTime - aTime;
+    });
+  },
+
+  async getTaskById(id: string): Promise<DBTask | null> {
+    let supabaseTask: DBTask | null = null;
+    if (supabase && isUuidLike(id)) {
+      const { data, error } = await supabase
+        .from("tasks")
+        .select("*")
+        .eq("id", id)
+        .maybeSingle();
+      if (!error && data) {
+        supabaseTask = mapTaskFromDb(data);
+      } else if (error) {
+        console.error("[Supabase Error] getTaskById fallback:", error);
+      }
+    }
+
+    const db = readDB();
+    const localTask = db.tasks.find((t) => t.id === id) || null;
+    return supabaseTask || localTask;
   },
 
   async createTask(task: DBTask): Promise<DBTask> {
     let createdTask: DBTask | null = null;
-    if (supabase) {
+    if (supabase && isUuidLike(task.userId) && isUuidLike(task.id)) {
       const dbTask = await mapTaskToDb(task);
       const { data, error } = await supabase
         .from("tasks")
@@ -820,6 +847,8 @@ const dbAdapter = {
         .maybeSingle();
       if (!error && data) createdTask = mapTaskFromDb(data);
       else console.error("[Supabase Error] createTask fallback:", error);
+    } else if (supabase && (!isUuidLike(task.userId) || !isUuidLike(task.id))) {
+      console.log(`[Supabase] Skipping task insert for non-UUID identifier: ${task.id}`);
     }
     const db = readDB();
     const taskToSave = createdTask || task;
@@ -830,7 +859,7 @@ const dbAdapter = {
 
   async updateTask(id: string, updates: Partial<DBTask>): Promise<DBTask> {
     let updatedTask: DBTask | null = null;
-    if (supabase) {
+    if (supabase && isUuidLike(id)) {
       const dbUpdates = await mapTaskToDb(updates);
       const { data, error } = await supabase
         .from("tasks")
@@ -840,6 +869,8 @@ const dbAdapter = {
         .maybeSingle();
       if (!error && data) updatedTask = mapTaskFromDb(data);
       else console.error("[Supabase Error] updateTask fallback:", error);
+    } else if (supabase && !isUuidLike(id)) {
+      console.log(`[Supabase] Skipping task update for non-UUID identifier: ${id}`);
     }
     const db = readDB();
     const idx = db.tasks.findIndex(t => t.id === id);
@@ -854,10 +885,12 @@ const dbAdapter = {
 
   async deleteTask(id: string): Promise<boolean> {
     let deletedFromSupabase = false;
-    if (supabase) {
+    if (supabase && isUuidLike(id)) {
       const { error } = await supabase.from("tasks").delete().eq("id", id);
       if (!error) deletedFromSupabase = true;
       else console.error("[Supabase Error] deleteTask fallback:", error);
+    } else if (supabase && !isUuidLike(id)) {
+      console.log(`[Supabase] Skipping task delete for non-UUID identifier: ${id}`);
     }
     const db = readDB();
     const idx = db.tasks.findIndex(t => t.id === id);
@@ -870,7 +903,8 @@ const dbAdapter = {
   },
 
   async getLogs(userId?: string): Promise<DBLog[]> {
-    if (supabase) {
+    let supabaseLogs: DBLog[] = [];
+    if (supabase && (!userId || isUuidLike(userId))) {
       let query = supabase.from("logs").select("*");
       if (userId) {
         const logCasing = await detectLogCasing();
@@ -880,17 +914,50 @@ const dbAdapter = {
       const orderCol = (await detectLogCasing()) === "snake" ? "start_time" : "startTime";
       const { data, error } = await query.order(orderCol, { ascending: false });
       if (!error && data) {
-        return data.map(mapLogFromDb);
+        supabaseLogs = data.map(mapLogFromDb);
+      } else {
+        console.error("[Supabase Error] getLogs fallback:", error);
       }
-      console.error("[Supabase Error] getLogs fallback:", error);
+    } else if (userId && !isUuidLike(userId)) {
+      console.log(`[Supabase] Skipping log lookup for non-UUID user id: ${userId}`);
     }
     const db = readDB();
-    if (userId) return db.logs.filter(l => l.userId === userId);
-    return db.logs;
+    const localLogs = userId ? db.logs.filter(l => l.userId === userId) : db.logs;
+    
+    // Merge logs from local DB and Supabase DB together, prioritizing Supabase DB values
+    const mergedMap = new Map<string, DBLog>();
+    localLogs.forEach(l => mergedMap.set(l.id, l));
+    supabaseLogs.forEach(l => mergedMap.set(l.id, l));
+    
+    return Array.from(mergedMap.values()).sort((a, b) => {
+      const aTime = new Date(a.startTime).getTime();
+      const bTime = new Date(b.startTime).getTime();
+      return bTime - aTime;
+    });
+  },
+
+  async getLogById(id: string): Promise<DBLog | null> {
+    let supabaseLog: DBLog | null = null;
+    if (supabase && isUuidLike(id)) {
+      const { data, error } = await supabase
+        .from("logs")
+        .select("*")
+        .eq("id", id)
+        .maybeSingle();
+      if (!error && data) {
+        supabaseLog = mapLogFromDb(data);
+      } else if (error) {
+        console.error("[Supabase Error] getLogById fallback:", error);
+      }
+    }
+
+    const db = readDB();
+    const localLog = db.logs.find((l) => l.id === id) || null;
+    return supabaseLog || localLog;
   },
 
   async getActiveLog(userId: string): Promise<DBLog | null> {
-    if (supabase) {
+    if (supabase && isUuidLike(userId)) {
       const logCasing = await detectLogCasing();
       const logUserIdKey = logCasing === "snake" ? "user_id" : (logCasing === "lowercase" ? "userid" : "userId");
       const endTimeKey = logCasing === "snake" ? "end_time" : (logCasing === "lowercase" ? "endtime" : "endTime");
@@ -902,6 +969,8 @@ const dbAdapter = {
         .maybeSingle();
       if (!error && data) return mapLogFromDb(data);
       if (error) console.error("[Supabase Error] getActiveLog fallback:", error);
+    } else if (supabase && !isUuidLike(userId)) {
+      console.log(`[Supabase] Skipping active log lookup for non-UUID user id: ${userId}`);
     }
     const db = readDB();
     return db.logs.find(l => l.userId === userId && !l.endTime) || null;
@@ -909,7 +978,7 @@ const dbAdapter = {
 
   async createLog(log: DBLog): Promise<DBLog> {
     let createdLog: DBLog | null = null;
-    if (supabase) {
+    if (supabase && isUuidLike(log.userId) && isUuidLike(log.id)) {
       const dbLog = await mapLogToDb(log);
       const { data, error } = await supabase
         .from("logs")
@@ -918,6 +987,8 @@ const dbAdapter = {
         .maybeSingle();
       if (!error && data) createdLog = mapLogFromDb(data);
       else console.error("[Supabase Error] createLog fallback:", error);
+    } else if (supabase && (!isUuidLike(log.userId) || !isUuidLike(log.id))) {
+      console.log(`[Supabase] Skipping log insert for non-UUID identifier: ${log.id}`);
     }
     const db = readDB();
     const logToSave = createdLog || log;
@@ -928,7 +999,7 @@ const dbAdapter = {
 
   async updateLog(id: string, updates: Partial<DBLog>): Promise<DBLog> {
     let updatedLog: DBLog | null = null;
-    if (supabase) {
+    if (supabase && isUuidLike(id)) {
       const dbUpdates = await mapLogToDb(updates);
       const { data, error } = await supabase
         .from("logs")
@@ -938,6 +1009,8 @@ const dbAdapter = {
         .maybeSingle();
       if (!error && data) updatedLog = mapLogFromDb(data);
       else console.error("[Supabase Error] updateLog fallback:", error);
+    } else if (supabase && !isUuidLike(id)) {
+      console.log(`[Supabase] Skipping log update for non-UUID identifier: ${id}`);
     }
     const db = readDB();
     const idx = db.logs.findIndex(l => l.id === id);
@@ -952,10 +1025,12 @@ const dbAdapter = {
 
   async deleteLog(id: string): Promise<boolean> {
     let deletedFromSupabase = false;
-    if (supabase) {
+    if (supabase && isUuidLike(id)) {
       const { error } = await supabase.from("logs").delete().eq("id", id);
       if (!error) deletedFromSupabase = true;
       else console.error("[Supabase Error] deleteLog fallback:", error);
+    } else if (supabase && !isUuidLike(id)) {
+      console.log(`[Supabase] Skipping log delete for non-UUID identifier: ${id}`);
     }
     const db = readDB();
     const idx = db.logs.findIndex(l => l.id === id);
@@ -1710,13 +1785,39 @@ app.patch("/api/users/:id", async (req, res) => {
   }
   
   const userId = req.params.id;
-  const { name, workType, scheduleStart, scheduleEnd, notificationTime, monthlyHoursCap, hourlyRate } = req.body;
+  const { name, username, password, workType, scheduleStart, scheduleEnd, notificationTime, monthlyHoursCap, hourlyRate } = req.body;
   
   console.log(`[Update User] Request to update user ID: ${userId}`);
-  console.log(`[Update User] Updates:`, { name, workType, scheduleStart, scheduleEnd, notificationTime, monthlyHoursCap, hourlyRate });
+  console.log(`[Update User] Updates:`, { name, username, workType, scheduleStart, scheduleEnd, notificationTime, monthlyHoursCap, hourlyRate, hasPassword: !!password });
   
   const updates: Partial<DBUser> = {};
   if (name !== undefined) updates.name = name;
+  if (username !== undefined) {
+    const cleanUsername = String(username).toLowerCase().trim();
+    if (!/^[a-z0-9_]{3,30}$/.test(cleanUsername)) {
+      res.status(400).json({ error: "Username must be 3-30 chars and contain only lowercase letters, numbers, and underscores." });
+      return;
+    }
+
+    const users = await dbAdapter.getUsers();
+    const duplicate = users.find(u => u.id !== userId && u.username.toLowerCase().trim() === cleanUsername);
+    if (duplicate) {
+      res.status(409).json({ error: "Username is already in use." });
+      return;
+    }
+
+    updates.username = cleanUsername;
+  }
+
+  if (password !== undefined) {
+    const cleanPassword = String(password);
+    if (cleanPassword.length < 8) {
+      res.status(400).json({ error: "Password must be at least 8 characters." });
+      return;
+    }
+    updates.passwordHash = hashPassword(cleanPassword);
+  }
+
   if (workType !== undefined) {
     updates.workType = workType;
     if (hourlyRate === undefined) {
@@ -1732,6 +1833,18 @@ app.patch("/api/users/:id", async (req, res) => {
   try {
     console.log(`[Update User] Calling dbAdapter.updateUser with:`, updates);
     const updatedUser = await dbAdapter.updateUser(userId, updates);
+
+    if (password !== undefined && useSupabase && supabase?.auth?.admin) {
+      const { error: authPasswordError } = await supabase.auth.admin.updateUserById(userId, {
+        password: String(password),
+      });
+      if (authPasswordError) {
+        console.error("[Update User] Supabase auth password update failed:", authPasswordError);
+        res.status(500).json({ error: "Profile was updated, but password update failed in Supabase Auth." });
+        return;
+      }
+    }
+
     console.log(`[Update User] SUCCESS: User updated:`, updatedUser.username);
     const { passwordHash, ...cleanUser } = updatedUser;
     res.json(cleanUser);
@@ -1803,7 +1916,16 @@ app.get("/api/tasks", async (req, res) => {
   
   if (user.role === "admin") {
     const tasks = await dbAdapter.getTasks();
-    res.json(tasks);
+    const users = await dbAdapter.getUsers();
+    const vaUsers = users.filter((u) => u.role === "va");
+    const vaIds = new Set(vaUsers.map((u) => u.id));
+    const vaUsernames = new Set(vaUsers.map((u) => u.username));
+
+    const vaOnlyTasks = tasks.filter((task) => {
+      return vaIds.has(task.userId) || vaUsernames.has(task.userName);
+    });
+
+    res.json(vaOnlyTasks);
   } else {
     const tasks = await dbAdapter.getTasks(user.id);
     res.json(tasks);
@@ -1880,8 +2002,7 @@ app.patch("/api/tasks/:id", async (req, res) => {
   const { title, project, status, priority, description } = req.body;
   
   try {
-    const tasks = await dbAdapter.getTasks();
-    const task = tasks.find(t => t.id === req.params.id);
+    const task = await dbAdapter.getTaskById(req.params.id);
     if (!task) {
       res.status(404).json({ error: "Task not found" });
       return;
@@ -1945,8 +2066,7 @@ app.delete("/api/tasks/:id", async (req, res) => {
     return;
   }
   
-  const tasks = await dbAdapter.getTasks();
-  const task = tasks.find(t => t.id === req.params.id);
+  const task = await dbAdapter.getTaskById(req.params.id);
   if (!task) {
     res.status(404).json({ error: "Task not found" });
     return;
@@ -1957,7 +2077,12 @@ app.delete("/api/tasks/:id", async (req, res) => {
     return;
   }
   
-  await dbAdapter.deleteTask(req.params.id);
+  const deleted = await dbAdapter.deleteTask(req.params.id);
+  if (!deleted) {
+    res.status(404).json({ error: "Task not found" });
+    return;
+  }
+
   res.json({ success: true });
 });
 
@@ -2057,8 +2182,7 @@ app.delete("/api/logs/:id", async (req, res) => {
     return;
   }
 
-  const logs = await dbAdapter.getLogs();
-  const log = logs.find((l) => l.id === req.params.id);
+  const log = await dbAdapter.getLogById(req.params.id);
 
   if (!log) {
     res.status(404).json({ error: "Log not found" });
@@ -2071,7 +2195,12 @@ app.delete("/api/logs/:id", async (req, res) => {
     return;
   }
 
-  await dbAdapter.deleteLog(req.params.id);
+  const deleted = await dbAdapter.deleteLog(req.params.id);
+  if (!deleted) {
+    res.status(404).json({ error: "Log not found" });
+    return;
+  }
+
   res.json({ success: true });
 });
 

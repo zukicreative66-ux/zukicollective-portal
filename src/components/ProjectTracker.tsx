@@ -1,6 +1,7 @@
-import React, { useState, useEffect } from 'react';
-import { Plus, CheckSquare, Clock, AlertTriangle, Play, CheckCircle2, ChevronRight, Sparkles, Folder, Trash2, Calendar } from 'lucide-react';
+import React, { useState, useEffect, useMemo } from 'react';
+import { Plus, CheckSquare, Folder, Trash2 } from 'lucide-react';
 import { User, Task } from '../types';
+import TaskDropdown, { TaskOption } from './TaskDropdown';
 
 interface ProjectTrackerProps {
   user: User;
@@ -21,6 +22,7 @@ export default function ProjectTracker({ user, token }: ProjectTrackerProps) {
   const [priority, setPriority] = useState<'Low' | 'Medium' | 'High'>('Medium');
   const [description, setDescription] = useState('');
   const [status, setStatus] = useState<'Todo' | 'In Progress' | 'In Review' | 'Completed'>('Todo');
+  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
 
   // Drag & Drop handlers
   const handleDragStart = (e: React.DragEvent, taskId: string) => {
@@ -51,15 +53,20 @@ export default function ProjectTracker({ user, token }: ProjectTrackerProps) {
     if (!token) return;
     try {
       setIsLoading(true);
+      setErrorMsg('');
       const res = await fetch('/api/tasks', {
         headers: { 'Authorization': `Bearer ${token}` }
       });
-      if (res.ok) {
-        const data = await res.json();
-        setTasks(data);
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        throw new Error(data?.error || 'Failed to load task board');
       }
+
+      const data = await res.json();
+      setTasks(data);
     } catch (err) {
       console.error('Error fetching tasks:', err);
+      setErrorMsg(err instanceof Error ? err.message : 'Error fetching task board data');
     } finally {
       setIsLoading(false);
     }
@@ -68,6 +75,16 @@ export default function ProjectTracker({ user, token }: ProjectTrackerProps) {
   useEffect(() => {
     fetchTasks();
   }, [token]);
+
+  const taskOptions = useMemo<TaskOption[]>(() => {
+    return tasks
+      .filter((task) => task.status !== 'Completed')
+      .map((task) => ({
+        id: task.id,
+        label: task.title,
+        detail: `${task.project} • ${task.status}`,
+      }));
+  }, [tasks]);
 
   const handleCreateTask = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -99,6 +116,7 @@ export default function ProjectTracker({ user, token }: ProjectTrackerProps) {
       setSuccessMsg('Task created and logged successfully!');
       setTitle('');
       setDescription('');
+      setSelectedTaskId(null);
       setShowCreateForm(false);
       fetchTasks();
       setTimeout(() => setSuccessMsg(''), 3000);
@@ -108,6 +126,7 @@ export default function ProjectTracker({ user, token }: ProjectTrackerProps) {
   };
 
   const handleUpdateStatus = async (taskId: string, nextStatus: 'Todo' | 'In Progress' | 'In Review' | 'Completed') => {
+    setErrorMsg('');
     try {
       const res = await fetch(`/api/tasks/${taskId}`, {
         method: 'PATCH',
@@ -118,29 +137,40 @@ export default function ProjectTracker({ user, token }: ProjectTrackerProps) {
         body: JSON.stringify({ status: nextStatus })
       });
 
-      if (res.ok) {
-        fetchTasks();
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        throw new Error(data?.error || 'Failed to move task to the new board');
       }
-    } catch (err) {
+
+      setSuccessMsg(`Task moved to ${nextStatus}.`);
+      fetchTasks();
+      setTimeout(() => setSuccessMsg(''), 3000);
+    } catch (err: any) {
       console.error('Error updating task status:', err);
+      setErrorMsg(err.message || 'Unable to move task right now.');
     }
   };
 
   const handleDeleteTask = async (taskId: string) => {
     if (!confirm('Are you sure you want to delete this task?')) return;
+    setErrorMsg('');
     try {
       const res = await fetch(`/api/tasks/${taskId}`, {
         method: 'DELETE',
         headers: { 'Authorization': `Bearer ${token}` }
       });
 
-      if (res.ok) {
-        setSuccessMsg('Task deleted successfully.');
-        fetchTasks();
-        setTimeout(() => setSuccessMsg(''), 3000);
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        throw new Error(data?.error || 'Failed to delete task');
       }
-    } catch (err) {
+
+      setSuccessMsg('Task deleted successfully.');
+      fetchTasks();
+      setTimeout(() => setSuccessMsg(''), 3000);
+    } catch (err: any) {
       console.error('Error deleting task:', err);
+      setErrorMsg(err.message || 'Unable to delete task right now.');
     }
   };
 
@@ -249,6 +279,16 @@ export default function ProjectTracker({ user, token }: ProjectTrackerProps) {
                 <option value="In Review">In Review</option>
                 <option value="Completed">Completed</option>
               </select>
+            </div>
+
+            <div>
+              <label className="block text-[10px] font-mono font-bold text-brand-peach/60 uppercase tracking-widest mb-1.5">Link an existing task</label>
+              <TaskDropdown
+                options={taskOptions}
+                selectedId={selectedTaskId}
+                onSelect={(option) => setSelectedTaskId(option.id)}
+                placeholder="Choose a task"
+              />
             </div>
           </div>
 

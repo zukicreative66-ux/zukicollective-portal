@@ -36,6 +36,8 @@ export default function AdminPanel({ user, logs, onRefreshLogs, token }: AdminPa
   // Edit user profile state (Admin override)
   const [editingUserId, setEditingUserId] = useState<string | null>(null);
   const [editUserName, setEditUserName] = useState('');
+  const [editUserUsername, setEditUserUsername] = useState('');
+  const [editUserPassword, setEditUserPassword] = useState('');
   const [editUserWorkType, setEditUserWorkType] = useState<'full-time' | 'part-time'>('part-time');
   const [editUserRate, setEditUserRate] = useState('');
   const [editUserStart, setEditUserStart] = useState('');
@@ -617,6 +619,8 @@ export default function AdminPanel({ user, logs, onRefreshLogs, token }: AdminPa
   const handleStartEditUser = (u: User) => {
     setEditingUserId(u.id);
     setEditUserName(u.name);
+    setEditUserUsername(u.username);
+    setEditUserPassword('');
     setEditUserWorkType(u.workType);
     setEditUserRate(u.hourlyRate.toString());
     setEditUserStart(u.scheduleStart);
@@ -627,8 +631,19 @@ export default function AdminPanel({ user, logs, onRefreshLogs, token }: AdminPa
 
   // Save updated user settings
   const handleSaveUserOverride = async (userId: string) => {
-    if (!editUserName.trim() || !editUserStart || !editUserEnd) {
-      setErrorMessage('Name and Daily Shifts are required.');
+    if (!editUserName.trim() || !editUserUsername.trim() || !editUserStart || !editUserEnd) {
+      setErrorMessage('Name, username, and Daily Shifts are required.');
+      return;
+    }
+
+    const normalizedUsername = editUserUsername.trim().toLowerCase();
+    if (!/^[a-z0-9_]{3,30}$/.test(normalizedUsername)) {
+      setErrorMessage('Username must be 3-30 characters and use only lowercase letters, numbers, and underscores.');
+      return;
+    }
+
+    if (editUserPassword && editUserPassword.length < 8) {
+      setErrorMessage('New password must be at least 8 characters.');
       return;
     }
 
@@ -641,6 +656,8 @@ export default function AdminPanel({ user, logs, onRefreshLogs, token }: AdminPa
         },
         body: JSON.stringify({
           name: editUserName.trim(),
+          username: normalizedUsername,
+          password: editUserPassword || undefined,
           workType: editUserWorkType,
           hourlyRate: parseFloat(editUserRate) || 200,
           scheduleStart: editUserStart,
@@ -651,7 +668,8 @@ export default function AdminPanel({ user, logs, onRefreshLogs, token }: AdminPa
       });
 
       if (!response.ok) {
-        throw new Error('Failed to update employee configurations.');
+        const errData = await response.json().catch(() => null);
+        throw new Error(errData?.error || 'Failed to update employee configurations.');
       }
 
       setSuccessMessage('Employee profile configuration saved successfully!');
@@ -1172,6 +1190,35 @@ export default function AdminPanel({ user, logs, onRefreshLogs, token }: AdminPa
 
                     {/* Operational Configurations Controls */}
                     <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 flex-1 max-w-2xl text-xs">
+                      <div>
+                        <span className="text-[9px] font-mono text-brand-peach/50 uppercase block mb-1">Username</span>
+                        {isEditingUser ? (
+                          <input
+                            type="text"
+                            value={editUserUsername}
+                            onChange={(e) => setEditUserUsername(e.target.value.toLowerCase())}
+                            className="w-full bg-brand-brown border border-brand-peach/20 rounded px-2 py-1 text-brand-cream font-mono"
+                          />
+                        ) : (
+                          <span className="font-mono text-brand-cream">@{u.username}</span>
+                        )}
+                      </div>
+
+                      <div>
+                        <span className="text-[9px] font-mono text-brand-peach/50 uppercase block mb-1">New Password</span>
+                        {isEditingUser ? (
+                          <input
+                            type="password"
+                            value={editUserPassword}
+                            onChange={(e) => setEditUserPassword(e.target.value)}
+                            placeholder="leave blank"
+                            className="w-full bg-brand-brown border border-brand-peach/20 rounded px-2 py-1 text-brand-cream font-mono"
+                          />
+                        ) : (
+                          <span className="font-mono text-brand-cream/50">••••••••</span>
+                        )}
+                      </div>
+
                       <div>
                         <span className="text-[9px] font-mono text-brand-peach/50 uppercase block mb-1">Engagement Type</span>
                         {isEditingUser ? (
