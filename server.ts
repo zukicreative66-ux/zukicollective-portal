@@ -10,6 +10,7 @@ import dotenv from "dotenv";
 dotenv.config();
 
 const app = express();
+app.set("trust proxy", 1);
 const PORT = 3000;
 
 const isVercel = !!process.env.VERCEL;
@@ -32,6 +33,73 @@ if (useSupabase) {
 }
 
 const resetTokens = new Map<string, { email: string; otp: string; expiresAt: number; attempts: number }>();
+const authActionRateLimits = new Map<string, { count: number; resetTime: number }>();
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+function getClientIp(req: express.Request): string {
+  const rawIp = req.headers["x-forwarded-for"] || req.socket.remoteAddress || "unknown";
+  if (Array.isArray(rawIp)) return rawIp[0];
+  if (typeof rawIp === "string") return rawIp.split(",")[0].trim();
+  return "unknown";
+}
+
+function getRateLimitIdentity(req: express.Request): string {
+  const authHeader = req.headers.authorization;
+  if (authHeader && authHeader.startsWith("Bearer ")) {
+    const token = authHeader.split(" ")[1] || "";
+    // Keep token material out of memory keys by hashing before use.
+    if (token.length > 20) {
+      const tokenFingerprint = crypto.createHash("sha256").update(token).digest("hex").slice(0, 16);
+      return `token:${tokenFingerprint}`;
+    }
+  }
+  return `ip:${getClientIp(req)}`;
+}
+
+function sanitizeAuthIdentifier(value: string): string {
+  return value.toLowerCase().trim().slice(0, 80);
+}
+
+function timingSafeStringEqual(a: string, b: string): boolean {
+  const aBuf = Buffer.from(a, "utf8");
+  const bBuf = Buffer.from(b, "utf8");
+  if (aBuf.length !== bBuf.length) return false;
+  return crypto.timingSafeEqual(aBuf, bBuf);
+}
+
+function enforceAuthActionLimit(
+  action: string,
+  identifier: string,
+  windowMs: number,
+  maxRequests: number,
+): { blocked: boolean; retryAfterSeconds?: number } {
+  const key = `${action}:${sanitizeAuthIdentifier(identifier)}`;
+  const now = Date.now();
+
+  if (authActionRateLimits.size > 5000) {
+    for (const [k, v] of authActionRateLimits.entries()) {
+      if (now > v.resetTime) authActionRateLimits.delete(k);
+    }
+  }
+
+  const current = authActionRateLimits.get(key);
+
+  if (!current || now > current.resetTime) {
+    authActionRateLimits.set(key, { count: 1, resetTime: now + windowMs });
+    return { blocked: false };
+  }
+
+  if (current.count >= maxRequests) {
+    return {
+      blocked: true,
+      retryAfterSeconds: Math.max(1, Math.ceil((current.resetTime - now) / 1000)),
+    };
+  }
+
+  current.count += 1;
+  return { blocked: false };
+}
 
 function hashPassword(password: string): string {
   return crypto.createHash("sha256").update(password).digest("hex");
@@ -1119,7 +1187,7 @@ const dbAdapter = {
   }
 };
 
-app.use(express.json());
+app.use(express.json({ limit: "20kb" }));
 
 // 1. Security baseline headers middleware
 app.use((req, res, next) => {
@@ -1135,6 +1203,10 @@ app.use((req, res, next) => {
   if (process.env.NODE_ENV === "production") {
     res.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains; preload");
   }
+  if (req.path.startsWith("/api/auth")) {
+    res.setHeader("Cache-Control", "no-store");
+    res.setHeader("Pragma", "no-cache");
+  }
   next();
 });
 
@@ -1143,34 +1215,56 @@ const ipRateLimits = new Map<string, { count: number; resetTime: number }>();
 
 function ipRateLimiter(windowMs: number, maxRequests: number, message: string) {
   return (req: express.Request, res: express.Response, next: express.NextFunction) => {
-    const rawIp = req.headers["x-forwarded-for"] || req.socket.remoteAddress || "unknown";
-    const ip = Array.isArray(rawIp) ? rawIp[0] : (typeof rawIp === "string" ? rawIp.split(",")[0].trim() : "unknown");
-    const key = `${req.path}:${ip}`;
+    const identity = getRateLimitIdentity(req);
+    const key = `${req.path}:${identity}`;
     const now = Date.now();
+
+    if (ipRateLimits.size > 5000) {
+      for (const [k, v] of ipRateLimits.entries()) {
+        if (now > v.resetTime) ipRateLimits.delete(k);
+      }
+    }
 
     const limit = ipRateLimits.get(key);
     if (!limit) {
-      ipRateLimits.set(key, { count: 1, resetTime: now + windowMs });
+      const resetTime = now + windowMs;
+      ipRateLimits.set(key, { count: 1, resetTime });
+      res.setHeader("X-RateLimit-Limit", String(maxRequests));
+      res.setHeader("X-RateLimit-Remaining", String(maxRequests - 1));
+      res.setHeader("X-RateLimit-Reset", String(Math.ceil(resetTime / 1000)));
       return next();
     }
 
     if (now > limit.resetTime) {
-      ipRateLimits.set(key, { count: 1, resetTime: now + windowMs });
+      const resetTime = now + windowMs;
+      ipRateLimits.set(key, { count: 1, resetTime });
+      res.setHeader("X-RateLimit-Limit", String(maxRequests));
+      res.setHeader("X-RateLimit-Remaining", String(maxRequests - 1));
+      res.setHeader("X-RateLimit-Reset", String(Math.ceil(resetTime / 1000)));
       return next();
     }
 
     if (limit.count >= maxRequests) {
+      const retryAfterSeconds = Math.max(1, Math.ceil((limit.resetTime - now) / 1000));
+      res.setHeader("Retry-After", String(retryAfterSeconds));
+      res.setHeader("X-RateLimit-Limit", String(maxRequests));
+      res.setHeader("X-RateLimit-Remaining", "0");
+      res.setHeader("X-RateLimit-Reset", String(Math.ceil(limit.resetTime / 1000)));
       res.status(429).json({ error: message });
       return;
     }
 
     limit.count += 1;
+    res.setHeader("X-RateLimit-Limit", String(maxRequests));
+    res.setHeader("X-RateLimit-Remaining", String(Math.max(0, maxRequests - limit.count)));
+    res.setHeader("X-RateLimit-Reset", String(Math.ceil(limit.resetTime / 1000)));
     next();
   };
 }
 
-// Global API rate limiting to protect database and resources
-app.use("/api", ipRateLimiter(60000, 150, "Too many API requests from this IP. Please slow down."));
+// Global API rate limiting. Authenticated requests are keyed by token identity,
+// which avoids shared VPN IP collisions for active VA sessions.
+app.use("/api", ipRateLimiter(60000, 600, "Too many API requests right now. Please slow down and retry."));
 
 // 3. Brute force defense system: track username-based lockouts
 const loginAttempts = new Map<string, { count: number; lockUntil: number }>();
@@ -1214,7 +1308,7 @@ async function getUserFromToken(authHeader?: string) {
 }
 
 // 1. Auth Endpoint (Protected with IP rate limiting and username brute force lockout)
-app.post("/api/auth/login", ipRateLimiter(60000, 10, "Too many login attempts from this IP. Please try again in 1 minute."), async (req, res) => {
+app.post("/api/auth/login", ipRateLimiter(60000, 60, "Too many login attempts from this network. Please try again in 1 minute."), async (req, res) => {
   try {
     const { username, password } = req.body;
     console.log(`[Login] Attempt for username: ${username}`);
@@ -1225,6 +1319,23 @@ app.post("/api/auth/login", ipRateLimiter(60000, 10, "Too many login attempts fr
     }
 
     const cleanUsername = username.toLowerCase().trim();
+    if (!/^[a-zA-Z0-9_@.\-]{3,80}$/.test(cleanUsername)) {
+      await sleep(350);
+      res.status(400).json({ error: "Invalid username format." });
+      return;
+    }
+    if (typeof password !== "string" || password.length < 6 || password.length > 128) {
+      await sleep(350);
+      res.status(400).json({ error: "Invalid password format." });
+      return;
+    }
+
+    const accountLoginLimit = enforceAuthActionLimit("login-account", cleanUsername, 15 * 60 * 1000, 20);
+    if (accountLoginLimit.blocked) {
+      res.setHeader("Retry-After", String(accountLoginLimit.retryAfterSeconds || 60));
+      res.status(429).json({ error: "Too many login attempts for this account. Please try again later." });
+      return;
+    }
 
     // Check username brute-force lockout status
     const lockData = loginAttempts.get(cleanUsername);
@@ -1237,6 +1348,7 @@ app.post("/api/auth/login", ipRateLimiter(60000, 10, "Too many login attempts fr
     const user = await dbAdapter.getUserByEmailOrUsername(username);
     if (!user) {
       console.log(`[Login] FAILED: User not found for username: ${username}`);
+      await sleep(450);
       res.status(401).json({ error: "Invalid username or password" });
       return;
     }
@@ -1289,6 +1401,7 @@ app.post("/api/auth/login", ipRateLimiter(60000, 10, "Too many login attempts fr
     if (!loginSuccess) {
       const currentAttempts = lockData ? lockData.count : 0;
       const newCount = currentAttempts + 1;
+      await sleep(450);
       if (newCount >= 5) {
         loginAttempts.set(cleanUsername, {
           count: newCount,
@@ -1358,11 +1471,26 @@ app.get("/api/auth/me", async (req, res) => {
 });
 
 // 2.0a Password Reset Request (Forgot Password - Protected with IP rate limiter)
-app.post("/api/auth/forgot-password", ipRateLimiter(60000, 5, "Too many password reset requests. Please try again in 1 minute."), async (req, res) => {
+app.post("/api/auth/forgot-password", ipRateLimiter(60000, 30, "Too many password reset requests from this network. Please try again in 1 minute."), async (req, res) => {
   try {
     const { usernameOrEmail } = req.body;
     if (!usernameOrEmail) {
       res.status(400).json({ error: "Username or email is required" });
+      return;
+    }
+
+    const cleanIdentifier = sanitizeAuthIdentifier(String(usernameOrEmail));
+    const ip = getClientIp(req);
+    const perAccountResetLimit = enforceAuthActionLimit("forgot-password-account", cleanIdentifier, 15 * 60 * 1000, 3);
+    if (perAccountResetLimit.blocked) {
+      res.setHeader("Retry-After", String(perAccountResetLimit.retryAfterSeconds || 60));
+      res.status(429).json({ error: "Too many password reset requests for this account. Please try again later." });
+      return;
+    }
+    const perIpResetLimit = enforceAuthActionLimit("forgot-password-ip", ip, 15 * 60 * 1000, 45);
+    if (perIpResetLimit.blocked) {
+      res.setHeader("Retry-After", String(perIpResetLimit.retryAfterSeconds || 60));
+      res.status(429).json({ error: "Too many password reset requests from this network. Please try again later." });
       return;
     }
 
@@ -1404,14 +1532,13 @@ app.post("/api/auth/forgot-password", ipRateLimiter(60000, 5, "Too many password
       }
     }
 
-    const sent = await sendResetEmail(emailStr, user.username, otp);
+    await sendResetEmail(emailStr, user.username, otp);
 
     res.json({
       success: true,
       message: `A 6-digit verification code has been sent to your registered email: ${maskedEmail}.`,
       username: user.username,
       email: maskedEmail,
-      realSent: sent,
     });
   } catch (error: any) {
     console.error("[ForgotPassword Error]:", error);
@@ -1420,7 +1547,7 @@ app.post("/api/auth/forgot-password", ipRateLimiter(60000, 5, "Too many password
 });
 
 // 2.0b Password Reset Verification & Update (Protected with IP rate limiter)
-app.post("/api/auth/reset-password", ipRateLimiter(60000, 5, "Too many reset verification attempts. Please try again in 1 minute."), async (req, res) => {
+app.post("/api/auth/reset-password", ipRateLimiter(60000, 40, "Too many reset verification attempts from this network. Please try again in 1 minute."), async (req, res) => {
   try {
     const { username, otp, newPassword } = req.body;
     if (!username || !otp || !newPassword) {
@@ -1429,6 +1556,20 @@ app.post("/api/auth/reset-password", ipRateLimiter(60000, 5, "Too many reset ver
     }
 
     const cleanUsername = username.toLowerCase().trim();
+    const ip = getClientIp(req);
+    const perAccountResetAttemptLimit = enforceAuthActionLimit("reset-password-account", cleanUsername, 15 * 60 * 1000, 10);
+    if (perAccountResetAttemptLimit.blocked) {
+      res.setHeader("Retry-After", String(perAccountResetAttemptLimit.retryAfterSeconds || 60));
+      res.status(429).json({ error: "Too many reset verification attempts for this account. Please try again later." });
+      return;
+    }
+    const perIpResetAttemptLimit = enforceAuthActionLimit("reset-password-ip", ip, 15 * 60 * 1000, 80);
+    if (perIpResetAttemptLimit.blocked) {
+      res.setHeader("Retry-After", String(perIpResetAttemptLimit.retryAfterSeconds || 60));
+      res.status(429).json({ error: "Too many reset verification attempts from this network. Please try again later." });
+      return;
+    }
+
     const tokenData = resetTokens.get(cleanUsername);
     if (!tokenData) {
       res.status(400).json({ error: "No active password reset request found for this user." });
@@ -1442,8 +1583,12 @@ app.post("/api/auth/reset-password", ipRateLimiter(60000, 5, "Too many reset ver
     }
 
     // Enforce server-side password validation
-    if (newPassword.length < 6) {
-      res.status(400).json({ error: "Password must be at least 6 characters long." });
+    if (newPassword.length < 8 || newPassword.length > 128) {
+      res.status(400).json({ error: "Password must be between 8 and 128 characters." });
+      return;
+    }
+    if (!/[A-Z]/.test(newPassword) || !/[a-z]/.test(newPassword) || !/\d/.test(newPassword)) {
+      res.status(400).json({ error: "Password must include uppercase, lowercase, and a number." });
       return;
     }
 
@@ -1453,7 +1598,7 @@ app.post("/api/auth/reset-password", ipRateLimiter(60000, 5, "Too many reset ver
       return;
     }
 
-    if (tokenData.otp !== otp.trim()) {
+    if (!timingSafeStringEqual(tokenData.otp, otp.trim())) {
       tokenData.attempts += 1;
       if (tokenData.attempts >= 3) {
         resetTokens.delete(cleanUsername);

@@ -9,6 +9,7 @@ import AdminPanel from './components/AdminPanel';
 import AcceptInviteView from './components/AcceptInviteView';
 import { Shield, Clock, Key, AlertCircle, Mail, Lock, HelpCircle, ArrowLeft, CheckCircle2 } from 'lucide-react';
 import { logoZuki } from './utils/assets';
+import { supabase } from './lib/supabaseClient';
 
 export default function App() {
   const [token, setToken] = useState<string | null>(localStorage.getItem('itp_token'));
@@ -65,6 +66,19 @@ export default function App() {
   const [maskedEmail, setMaskedEmail] = useState('');
   const [loginSuccessMessage, setLoginSuccessMessage] = useState('');
 
+  const replacePath = (path: string) => {
+    if (window.location.pathname !== path) {
+      window.history.replaceState({}, '', path);
+    }
+  };
+
+  const clearAuthState = () => {
+    localStorage.removeItem('itp_token');
+    setToken(null);
+    setUser(null);
+    setLogs([]);
+  };
+
   useEffect(() => {
     document.title = 'Zuki Creatives Portal';
   }, []);
@@ -73,15 +87,31 @@ export default function App() {
   useEffect(() => {
     const checkAuth = async () => {
       const storedToken = localStorage.getItem('itp_token');
-      if (!storedToken) {
+      let supabaseSessionToken: string | null = null;
+
+      if (supabase) {
+        const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+        if (!sessionError) {
+          supabaseSessionToken = sessionData.session?.access_token || null;
+        }
+      }
+
+      const authToken = storedToken || supabaseSessionToken;
+      if (!authToken) {
+        clearAuthState();
+        replacePath('/login');
         setIsCheckingAuth(false);
         return;
+      }
+
+      if (supabaseSessionToken && supabaseSessionToken !== storedToken) {
+        localStorage.setItem('itp_token', supabaseSessionToken);
       }
 
       try {
         const response = await fetch('/api/auth/me', {
           headers: {
-            'Authorization': `Bearer ${storedToken}`,
+            'Authorization': `Bearer ${authToken}`,
           },
         });
 
@@ -93,28 +123,26 @@ export default function App() {
           // This prevents the race condition where UI renders before role is available
           if (userData && userData.role) {
             setUser(userData);
-            setToken(storedToken);
+            setToken(authToken);
             const isAdminUser = userData.role === 'admin' || userData.role === 'developer';
             setActiveTab(isAdminUser ? 'admin' : 'dashboard');
+            replacePath('/dashboard');
           } else {
             // User data incomplete - treat as invalid session
             console.warn('User data missing role information');
-            localStorage.removeItem('itp_token');
-            setToken(null);
-            setUser(null);
+            clearAuthState();
+            replacePath('/login');
           }
         } else {
           // Token expired or invalid
-          localStorage.removeItem('itp_token');
-          setToken(null);
-          setUser(null);
+          clearAuthState();
+          replacePath('/login');
         }
       } catch (err) {
         console.error('Error verifying existing token:', err);
         // On error, ensure clean state
-        localStorage.removeItem('itp_token');
-        setToken(null);
-        setUser(null);
+        clearAuthState();
+        replacePath('/login');
       } finally {
         // CRITICAL: Only set loading to false after user state is fully set
         // This ensures the loading screen stays visible until auth is complete
@@ -124,6 +152,38 @@ export default function App() {
 
     checkAuth();
   }, []);
+
+  useEffect(() => {
+    if (!supabase) return;
+
+    const { data: subscriptionData } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (!session) {
+        clearAuthState();
+        replacePath('/login');
+        return;
+      }
+
+      if (session.access_token) {
+        localStorage.setItem('itp_token', session.access_token);
+        setToken(session.access_token);
+      }
+    });
+
+    return () => {
+      subscriptionData.subscription.unsubscribe();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (isCheckingAuth || inviteToken) return;
+
+    if (user && token) {
+      replacePath('/dashboard');
+      return;
+    }
+
+    replacePath('/login');
+  }, [isCheckingAuth, inviteToken, user, token]);
 
   useEffect(() => {
     if (!user) return;
@@ -199,6 +259,7 @@ export default function App() {
       setUser(data.user);
       const loginIsAdmin = data.user.role === 'admin' || data.user.role === 'developer';
       setActiveTab(loginIsAdmin ? 'admin' : 'dashboard');
+      replacePath('/dashboard');
     } catch (err: any) {
       setLoginError(err.message || 'Server connection failed.');
     } finally {
@@ -207,15 +268,16 @@ export default function App() {
   };
 
   // 4. Logout Action
-  const handleLogout = () => {
-    localStorage.removeItem('itp_token');
-    setToken(null);
-    setUser(null);
-    setLogs([]);
+  const handleLogout = async () => {
+    if (supabase) {
+      await supabase.auth.signOut();
+    }
+    clearAuthState();
     setUsername('');
     setPassword('');
     setLoginError('');
     setLoginSuccessMessage('');
+    replacePath('/login');
   };
 
   // 4.1 Forgot Password Request
@@ -262,8 +324,13 @@ export default function App() {
       return;
     }
 
-    if (newPassword.length < 6) {
-      setResetErrorMessage('Password must be at least 6 characters long.');
+    if (newPassword.length < 8 || newPassword.length > 128) {
+      setResetErrorMessage('Password must be between 8 and 128 characters.');
+      return;
+    }
+
+    if (!/[A-Z]/.test(newPassword) || !/[a-z]/.test(newPassword) || !/\d/.test(newPassword)) {
+      setResetErrorMessage('Password must include uppercase, lowercase, and a number.');
       return;
     }
 
@@ -309,6 +376,22 @@ export default function App() {
         </div>
         <p className="text-xs text-brand-peach/60 font-mono mt-4 tracking-wider uppercase">Authenticating Portal Session...</p>
       </div>
+    );
+  }
+
+  // Invite acceptance page — shown when Supabase sends the user to /accept-invite
+  if (inviteToken) {
+    return (
+      <AcceptInviteView
+        accessToken={inviteToken}
+        onInviteAccepted={(userData, newToken) => {
+          setUser(userData);
+          setToken(newToken);
+          const isAdminUser = userData.role === 'admin' || userData.role === 'developer';
+          setActiveTab(isAdminUser ? 'admin' : 'dashboard');
+          replacePath('/dashboard');
+        }}
+      />
     );
   }
 
@@ -570,21 +653,6 @@ export default function App() {
           </div>
         </div>
       </div>
-    );
-  }
-
-  // Invite acceptance page — shown when Supabase sends the user to /accept-invite
-  if (inviteToken) {
-    return (
-      <AcceptInviteView
-        accessToken={inviteToken}
-        onInviteAccepted={(userData, newToken) => {
-          setUser(userData);
-          setToken(newToken);
-          const isAdminUser = userData.role === 'admin' || userData.role === 'developer';
-          setActiveTab(isAdminUser ? 'admin' : 'dashboard');
-        }}
-      />
     );
   }
 

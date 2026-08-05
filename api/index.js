@@ -8,6 +8,7 @@ import { createClient } from "@supabase/supabase-js";
 import dotenv from "dotenv";
 dotenv.config();
 var app = express();
+app.set("trust proxy", 1);
 var PORT = 3e3;
 var isVercel = !!process.env.VERCEL;
 var ORIGINAL_DB_FILE = path.join(process.cwd(), "db_data.json");
@@ -22,6 +23,56 @@ if (useSupabase) {
   console.log(`[Database] Running with local JSON database fallback: ${DB_FILE}`);
 }
 var resetTokens = /* @__PURE__ */ new Map();
+var authActionRateLimits = /* @__PURE__ */ new Map();
+var sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+function getClientIp(req) {
+  const rawIp = req.headers["x-forwarded-for"] || req.socket.remoteAddress || "unknown";
+  if (Array.isArray(rawIp)) return rawIp[0];
+  if (typeof rawIp === "string") return rawIp.split(",")[0].trim();
+  return "unknown";
+}
+function getRateLimitIdentity(req) {
+  const authHeader = req.headers.authorization;
+  if (authHeader && authHeader.startsWith("Bearer ")) {
+    const token = authHeader.split(" ")[1] || "";
+    if (token.length > 20) {
+      const tokenFingerprint = crypto.createHash("sha256").update(token).digest("hex").slice(0, 16);
+      return `token:${tokenFingerprint}`;
+    }
+  }
+  return `ip:${getClientIp(req)}`;
+}
+function sanitizeAuthIdentifier(value) {
+  return value.toLowerCase().trim().slice(0, 80);
+}
+function timingSafeStringEqual(a, b) {
+  const aBuf = Buffer.from(a, "utf8");
+  const bBuf = Buffer.from(b, "utf8");
+  if (aBuf.length !== bBuf.length) return false;
+  return crypto.timingSafeEqual(aBuf, bBuf);
+}
+function enforceAuthActionLimit(action, identifier, windowMs, maxRequests) {
+  const key = `${action}:${sanitizeAuthIdentifier(identifier)}`;
+  const now = Date.now();
+  if (authActionRateLimits.size > 5e3) {
+    for (const [k, v] of authActionRateLimits.entries()) {
+      if (now > v.resetTime) authActionRateLimits.delete(k);
+    }
+  }
+  const current = authActionRateLimits.get(key);
+  if (!current || now > current.resetTime) {
+    authActionRateLimits.set(key, { count: 1, resetTime: now + windowMs });
+    return { blocked: false };
+  }
+  if (current.count >= maxRequests) {
+    return {
+      blocked: true,
+      retryAfterSeconds: Math.max(1, Math.ceil((current.resetTime - now) / 1e3))
+    };
+  }
+  current.count += 1;
+  return { blocked: false };
+}
 function hashPassword(password) {
   return crypto.createHash("sha256").update(password).digest("hex");
 }
@@ -1000,7 +1051,7 @@ var dbAdapter = {
     return deletedFromSupabase;
   }
 };
-app.use(express.json());
+app.use(express.json({ limit: "20kb" }));
 app.use((req, res, next) => {
   res.setHeader("X-Content-Type-Options", "nosniff");
   res.setHeader("X-Frame-Options", "SAMEORIGIN");
@@ -1009,33 +1060,57 @@ app.use((req, res, next) => {
   if (process.env.NODE_ENV === "production") {
     res.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains; preload");
   }
+  if (req.path.startsWith("/api/auth")) {
+    res.setHeader("Cache-Control", "no-store");
+    res.setHeader("Pragma", "no-cache");
+  }
   next();
 });
 var ipRateLimits = /* @__PURE__ */ new Map();
 function ipRateLimiter(windowMs, maxRequests, message) {
   return (req, res, next) => {
-    const rawIp = req.headers["x-forwarded-for"] || req.socket.remoteAddress || "unknown";
-    const ip = Array.isArray(rawIp) ? rawIp[0] : typeof rawIp === "string" ? rawIp.split(",")[0].trim() : "unknown";
-    const key = `${req.path}:${ip}`;
+    const identity = getRateLimitIdentity(req);
+    const key = `${req.path}:${identity}`;
     const now = Date.now();
+    if (ipRateLimits.size > 5e3) {
+      for (const [k, v] of ipRateLimits.entries()) {
+        if (now > v.resetTime) ipRateLimits.delete(k);
+      }
+    }
     const limit = ipRateLimits.get(key);
     if (!limit) {
-      ipRateLimits.set(key, { count: 1, resetTime: now + windowMs });
+      const resetTime = now + windowMs;
+      ipRateLimits.set(key, { count: 1, resetTime });
+      res.setHeader("X-RateLimit-Limit", String(maxRequests));
+      res.setHeader("X-RateLimit-Remaining", String(maxRequests - 1));
+      res.setHeader("X-RateLimit-Reset", String(Math.ceil(resetTime / 1e3)));
       return next();
     }
     if (now > limit.resetTime) {
-      ipRateLimits.set(key, { count: 1, resetTime: now + windowMs });
+      const resetTime = now + windowMs;
+      ipRateLimits.set(key, { count: 1, resetTime });
+      res.setHeader("X-RateLimit-Limit", String(maxRequests));
+      res.setHeader("X-RateLimit-Remaining", String(maxRequests - 1));
+      res.setHeader("X-RateLimit-Reset", String(Math.ceil(resetTime / 1e3)));
       return next();
     }
     if (limit.count >= maxRequests) {
+      const retryAfterSeconds = Math.max(1, Math.ceil((limit.resetTime - now) / 1e3));
+      res.setHeader("Retry-After", String(retryAfterSeconds));
+      res.setHeader("X-RateLimit-Limit", String(maxRequests));
+      res.setHeader("X-RateLimit-Remaining", "0");
+      res.setHeader("X-RateLimit-Reset", String(Math.ceil(limit.resetTime / 1e3)));
       res.status(429).json({ error: message });
       return;
     }
     limit.count += 1;
+    res.setHeader("X-RateLimit-Limit", String(maxRequests));
+    res.setHeader("X-RateLimit-Remaining", String(Math.max(0, maxRequests - limit.count)));
+    res.setHeader("X-RateLimit-Reset", String(Math.ceil(limit.resetTime / 1e3)));
     next();
   };
 }
-app.use("/api", ipRateLimiter(6e4, 150, "Too many API requests from this IP. Please slow down."));
+app.use("/api", ipRateLimiter(6e4, 600, "Too many API requests right now. Please slow down and retry."));
 var loginAttempts = /* @__PURE__ */ new Map();
 async function getUserFromToken(authHeader) {
   if (!authHeader || !authHeader.startsWith("Bearer ")) {
@@ -1072,7 +1147,7 @@ async function getUserFromToken(authHeader) {
     return null;
   }
 }
-app.post("/api/auth/login", ipRateLimiter(6e4, 10, "Too many login attempts from this IP. Please try again in 1 minute."), async (req, res) => {
+app.post("/api/auth/login", ipRateLimiter(6e4, 60, "Too many login attempts from this network. Please try again in 1 minute."), async (req, res) => {
   try {
     const { username, password } = req.body;
     console.log(`[Login] Attempt for username: ${username}`);
@@ -1081,6 +1156,22 @@ app.post("/api/auth/login", ipRateLimiter(6e4, 10, "Too many login attempts from
       return;
     }
     const cleanUsername = username.toLowerCase().trim();
+    if (!/^[a-zA-Z0-9_@.\-]{3,80}$/.test(cleanUsername)) {
+      await sleep(350);
+      res.status(400).json({ error: "Invalid username format." });
+      return;
+    }
+    if (typeof password !== "string" || password.length < 6 || password.length > 128) {
+      await sleep(350);
+      res.status(400).json({ error: "Invalid password format." });
+      return;
+    }
+    const accountLoginLimit = enforceAuthActionLimit("login-account", cleanUsername, 15 * 60 * 1e3, 20);
+    if (accountLoginLimit.blocked) {
+      res.setHeader("Retry-After", String(accountLoginLimit.retryAfterSeconds || 60));
+      res.status(429).json({ error: "Too many login attempts for this account. Please try again later." });
+      return;
+    }
     const lockData = loginAttempts.get(cleanUsername);
     if (lockData && Date.now() < lockData.lockUntil) {
       const remainingMin = Math.ceil((lockData.lockUntil - Date.now()) / 6e4);
@@ -1090,6 +1181,7 @@ app.post("/api/auth/login", ipRateLimiter(6e4, 10, "Too many login attempts from
     const user = await dbAdapter.getUserByEmailOrUsername(username);
     if (!user) {
       console.log(`[Login] FAILED: User not found for username: ${username}`);
+      await sleep(450);
       res.status(401).json({ error: "Invalid username or password" });
       return;
     }
@@ -1133,6 +1225,7 @@ app.post("/api/auth/login", ipRateLimiter(6e4, 10, "Too many login attempts from
     if (!loginSuccess) {
       const currentAttempts = lockData ? lockData.count : 0;
       const newCount = currentAttempts + 1;
+      await sleep(450);
       if (newCount >= 5) {
         loginAttempts.set(cleanUsername, {
           count: newCount,
@@ -1195,11 +1288,25 @@ app.get("/api/auth/me", async (req, res) => {
     photoUrl: user.photoUrl
   });
 });
-app.post("/api/auth/forgot-password", ipRateLimiter(6e4, 5, "Too many password reset requests. Please try again in 1 minute."), async (req, res) => {
+app.post("/api/auth/forgot-password", ipRateLimiter(6e4, 30, "Too many password reset requests from this network. Please try again in 1 minute."), async (req, res) => {
   try {
     const { usernameOrEmail } = req.body;
     if (!usernameOrEmail) {
       res.status(400).json({ error: "Username or email is required" });
+      return;
+    }
+    const cleanIdentifier = sanitizeAuthIdentifier(String(usernameOrEmail));
+    const ip = getClientIp(req);
+    const perAccountResetLimit = enforceAuthActionLimit("forgot-password-account", cleanIdentifier, 15 * 60 * 1e3, 3);
+    if (perAccountResetLimit.blocked) {
+      res.setHeader("Retry-After", String(perAccountResetLimit.retryAfterSeconds || 60));
+      res.status(429).json({ error: "Too many password reset requests for this account. Please try again later." });
+      return;
+    }
+    const perIpResetLimit = enforceAuthActionLimit("forgot-password-ip", ip, 15 * 60 * 1e3, 45);
+    if (perIpResetLimit.blocked) {
+      res.setHeader("Retry-After", String(perIpResetLimit.retryAfterSeconds || 60));
+      res.status(429).json({ error: "Too many password reset requests from this network. Please try again later." });
       return;
     }
     const user = await dbAdapter.getUserByEmailOrUsername(usernameOrEmail);
@@ -1234,20 +1341,19 @@ app.post("/api/auth/forgot-password", ipRateLimiter(6e4, 5, "Too many password r
         maskedEmail = namePart.charAt(0) + "*@" + domainPart;
       }
     }
-    const sent = await sendResetEmail(emailStr, user.username, otp);
+    await sendResetEmail(emailStr, user.username, otp);
     res.json({
       success: true,
       message: `A 6-digit verification code has been sent to your registered email: ${maskedEmail}.`,
       username: user.username,
-      email: maskedEmail,
-      realSent: sent
+      email: maskedEmail
     });
   } catch (error) {
     console.error("[ForgotPassword Error]:", error);
     res.status(500).json({ error: error.message || "An internal error occurred during forgot password request." });
   }
 });
-app.post("/api/auth/reset-password", ipRateLimiter(6e4, 5, "Too many reset verification attempts. Please try again in 1 minute."), async (req, res) => {
+app.post("/api/auth/reset-password", ipRateLimiter(6e4, 40, "Too many reset verification attempts from this network. Please try again in 1 minute."), async (req, res) => {
   try {
     const { username, otp, newPassword } = req.body;
     if (!username || !otp || !newPassword) {
@@ -1255,6 +1361,19 @@ app.post("/api/auth/reset-password", ipRateLimiter(6e4, 5, "Too many reset verif
       return;
     }
     const cleanUsername = username.toLowerCase().trim();
+    const ip = getClientIp(req);
+    const perAccountResetAttemptLimit = enforceAuthActionLimit("reset-password-account", cleanUsername, 15 * 60 * 1e3, 10);
+    if (perAccountResetAttemptLimit.blocked) {
+      res.setHeader("Retry-After", String(perAccountResetAttemptLimit.retryAfterSeconds || 60));
+      res.status(429).json({ error: "Too many reset verification attempts for this account. Please try again later." });
+      return;
+    }
+    const perIpResetAttemptLimit = enforceAuthActionLimit("reset-password-ip", ip, 15 * 60 * 1e3, 80);
+    if (perIpResetAttemptLimit.blocked) {
+      res.setHeader("Retry-After", String(perIpResetAttemptLimit.retryAfterSeconds || 60));
+      res.status(429).json({ error: "Too many reset verification attempts from this network. Please try again later." });
+      return;
+    }
     const tokenData = resetTokens.get(cleanUsername);
     if (!tokenData) {
       res.status(400).json({ error: "No active password reset request found for this user." });
@@ -1265,8 +1384,12 @@ app.post("/api/auth/reset-password", ipRateLimiter(6e4, 5, "Too many reset verif
       res.status(400).json({ error: "Verification code has expired. Please request a new one." });
       return;
     }
-    if (newPassword.length < 6) {
-      res.status(400).json({ error: "Password must be at least 6 characters long." });
+    if (newPassword.length < 8 || newPassword.length > 128) {
+      res.status(400).json({ error: "Password must be between 8 and 128 characters." });
+      return;
+    }
+    if (!/[A-Z]/.test(newPassword) || !/[a-z]/.test(newPassword) || !/\d/.test(newPassword)) {
+      res.status(400).json({ error: "Password must include uppercase, lowercase, and a number." });
       return;
     }
     if (tokenData.attempts >= 3) {
@@ -1274,7 +1397,7 @@ app.post("/api/auth/reset-password", ipRateLimiter(6e4, 5, "Too many reset verif
       res.status(400).json({ error: "Too many failed attempts with this verification code. Please request a new code." });
       return;
     }
-    if (tokenData.otp !== otp.trim()) {
+    if (!timingSafeStringEqual(tokenData.otp, otp.trim())) {
       tokenData.attempts += 1;
       if (tokenData.attempts >= 3) {
         resetTokens.delete(cleanUsername);
